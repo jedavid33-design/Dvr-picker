@@ -18,6 +18,7 @@ const ctx = canvas.getContext("2d");
 const winnerEl = document.getElementById("winner");
 const spinBtn = document.getElementById("spinBtn");
 const watchedBtn = document.getElementById("watchedBtn");
+const deleteBtn = document.getElementById("deleteBtn");
 const undoBtn = document.getElementById("undoBtn");
 const resetBtn = document.getElementById("resetBtn");
 const movieList = document.getElementById("movieList");
@@ -99,17 +100,14 @@ function spin() {
       winnerEl.textContent = movies[selectedIndex].title;
       spinBtn.disabled = false;
       watchedBtn.disabled = false;
+      deleteBtn.disabled = false;
       drawWheel();
     }
   }
   requestAnimationFrame(animate);
 }
 
-function markWatched() {
-  if (selectedIndex == null) return;
-
-  lastState = JSON.stringify(movies);
-
+function updateWeights() {
   movies = movies.map((m, i) => ({
     ...m,
     weight: m.locked
@@ -118,14 +116,39 @@ function markWatched() {
         ? 1
         : m.weight + 1
   }));
+}
+
+function markWatched() {
+  if (selectedIndex == null) return;
+
+  lastState = JSON.stringify(movies);
+
+  updateWeights();
 
   selectedIndex = null;
   watchedBtn.disabled = true;
+  deleteBtn.disabled = true;
 
   save();
   render();
 }
 
+function watchedAndDelete() {
+  if (selectedIndex == null) return;
+
+  lastState = JSON.stringify(movies);
+
+  updateWeights();
+
+  movies = movies.filter((m, i) => i !== selectedIndex || m.locked);
+
+  selectedIndex = null;
+  watchedBtn.disabled = true;
+  deleteBtn.disabled = true;
+
+  save();
+  render();
+}
 function undo() {
   if (!lastState) return;
   movies = JSON.parse(lastState);
@@ -215,6 +238,7 @@ function render() { drawWheel(); renderList(); }
 
 spinBtn.onclick = spin;
 watchedBtn.onclick = markWatched;
+deleteBtn.onclick = watchedAndDelete;
 undoBtn.onclick = undo;
 resetBtn.onclick = () => dialog.showModal();
 document.getElementById("cancelReset").onclick = () => dialog.close();
@@ -224,6 +248,7 @@ document.getElementById("confirmReset").onclick = () => {
   selectedIndex = null;
   winnerEl.textContent = "Reset";
   watchedBtn.disabled = true;
+deleteBtn.disabled = true;
   save();
   render();
   dialog.close();
