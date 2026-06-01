@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Bedtime Movie Wheel</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div class="badge">🎥 Bedtime Movie</div>
+      <h1 id="winner">Tap spin</h1>
+      <p class="subtitle">Weighted by how long it’s been since each movie won.</p>
+    </header>
+
+    <section class="wheel-card">
+      <div class="pointer"></div>
+      <canvas id="wheel" width="680" height="680" aria-label="Movie wheel"></canvas>
+      <button id="spinBtn" class="primary">Spin</button>
+    </section>
+
+    <section class="actions">
+      <button id="watchedBtn" disabled>Watched Tonight</button>
+      <button id="undoBtn">Undo</button>
+      <button id="resetBtn">Reset</button>
+    </section>
+
+    <section class="list-card">
+      <div class="list-header">
+        <h2>Movies</h2>
+        <span id="totalSlices"></span>
+      </div>
+      <div id="movieList"></div>
+    </section>
+
+    <section class="edit-card">
+      <h2>Add a movie</h2>
+      <div class="add-row">
+        <input id="newMovie" placeholder="Movie title" />
+        <button id="addBtn">Add</button>
+      </div>
+      <p class="tiny">Data saves on this device using local browser storage.</p>
+    </section>
+  </main>
+
+  <dialog id="confirmDialog">
+    <p>Reset all weights back to 1?</p>
+    <div class="dialog-actions">
+      <button id="cancelReset">Cancel</button>
+      <button id="confirmReset" class="danger">Reset</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
