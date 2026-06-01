@@ -152,6 +152,8 @@ function watchedAndDelete() {
   render();
 }
 function increaseAllValues() {
+  alert("Button works!");
+
   lastState = JSON.stringify(movies);
 
   movies = movies.map(m => ({
