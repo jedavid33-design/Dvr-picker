@@ -155,7 +155,6 @@ selectedIndex = null;
   render();
 }
 function increaseAllValues() {
-  alert("Button works!");
 
   lastState = JSON.stringify(movies);
 
