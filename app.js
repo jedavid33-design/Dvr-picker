@@ -157,8 +157,9 @@ function undo() {
   selectedIndex = null;
   winnerEl.textContent = "Undone";
   watchedBtn.disabled = true;
-  save();
-  render();
+deleteBtn.disabled = true;
+save();
+render();
 }
 
 function drawWheel() {
