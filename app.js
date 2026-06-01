@@ -26,6 +26,7 @@ const totalSlices = document.getElementById("totalSlices");
 const newMovie = document.getElementById("newMovie");
 const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
+const increaseAllBtn = document.getElementById("increaseAllBtn");
 
 function freshDefaults() {
   return defaultMovies.map(title => ({
@@ -150,6 +151,17 @@ function watchedAndDelete() {
   save();
   render();
 }
+function increaseAllValues() {
+  lastState = JSON.stringify(movies);
+
+  movies = movies.map(m => ({
+    ...m,
+    weight: m.locked ? 1 : m.weight + 1
+  }));
+
+  save();
+  render();
+}
 function undo() {
   if (!lastState) return;
   movies = JSON.parse(lastState);
@@ -267,3 +279,4 @@ addBtn.onclick = () => {
 newMovie.addEventListener("keydown", e => { if (e.key === "Enter") addBtn.click(); });
 
 render();
+increaseAllBtn.onclick = increaseAllValues;
