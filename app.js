@@ -86,6 +86,7 @@ function spin() {
   spinning = true;
   spinBtn.disabled = true;
   watchedBtn.disabled = true;
+  deleteBtn.disabled = true;
   winnerEl.textContent = "Spinning...";
 
   function animate(now) {
