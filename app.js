@@ -126,8 +126,9 @@ function markWatched() {
   lastState = JSON.stringify(movies);
 
   updateWeights();
+  shuffleItems();
 
-  selectedIndex = null;
+selectedIndex = null;
   watchedBtn.disabled = true;
   deleteBtn.disabled = true;
 
@@ -144,7 +145,9 @@ function watchedAndDelete() {
 
   movies = movies.filter((m, i) => i !== selectedIndex || m.locked);
 
-  selectedIndex = null;
+shuffleItems();
+
+selectedIndex = null;
   watchedBtn.disabled = true;
   deleteBtn.disabled = true;
 
@@ -157,12 +160,20 @@ function increaseAllValues() {
   lastState = JSON.stringify(movies);
 
   movies = movies.map(m => ({
-    ...m,
-    weight: m.locked ? 1 : m.weight + 1
-  }));
+  ...m,
+  weight: m.locked ? 1 : m.weight + 1
+}));
 
-  save();
+shuffleItems();
+
+save();
   render();
+}
+function shuffleItems() {
+  for (let i = movies.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [movies[i], movies[j]] = [movies[j], movies[i]];
+  }
 }
 function undo() {
   if (!lastState) return;
