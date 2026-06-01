@@ -1,44 +1,8 @@
 const defaultMovies = [
-  "Moana 2",
-  "Rogers and Hammerstein's Cinderella",
-  "Mulan",
-  "The Hunchback of Notre Dame",
-  "Descendants",
-  "Encanto",
-  "How To Train Your Dragon",
-  "Mufasa",
-  "Sister Act",
-  "Big Hero 6",
-  "Disney's Beauty and the Beast",
-  "Hercules",
-  "Disney's Aladdin",
-  "Moana",
-  "Aladdin",
-  "The Little Mermaid",
-  "Tangled",
-  "Newsies Broadway Musical",
-  "A League of Their Own",
-  "Inside Out",
-  "Atlantis: The Lost Empire",
-  "Wish",
-  "Brother Bear",
-  "Anastasia",
-  "The Princess and the Frog",
-  "Harry Potter",
-  "The Rookie",
-  "Wicked",
-  "Disney's The Lion King",
-  "Beauty and the Beast",
-  "Frozen 2",
-  "Coco",
-  "Frozen",
-  "Lion King",
-  "The Emperor's New Groove",
-  "Lilo and Stitch",
-  "Tarzan",
-  "Raya and the Last Dragon",
-  "The Greatest Showman",
-  "Frozen Broadway"
+  "Test 1",
+  "Test 2",
+  "Test 3",
+  "🎲 Second Spin"
 ];
 
 const colors = ["#a9c1b2", "#edd49f", "#e4ae99", "#e8bab0", "#a9a8c8", "#abc0d2", "#a4bdad", "#ebcf93", "#e9b3a0", "#c4b2dc"];
@@ -63,7 +27,11 @@ const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
 
 function freshDefaults() {
-  return defaultMovies.map(title => ({ title, weight: 1 }));
+  return defaultMovies.map(title => ({
+    title,
+    weight: 1,
+    locked: title === "🎲 Second Spin"
+  }));
 }
 
 function load() {
@@ -74,7 +42,11 @@ function load() {
     if (!Array.isArray(parsed) || parsed.length === 0) return freshDefaults();
     return parsed
       .filter(item => item && typeof item.title === "string" && item.title.trim())
-      .map(item => ({ title: item.title.trim(), weight: Math.max(1, Number(item.weight) || 1) }));
+      .map(item => ({
+  title: item.title.trim(),
+  weight: Math.max(1, Number(item.weight) || 1),
+  locked: item.locked || item.title.trim() === "🎲 Second Spin"
+}))
   } catch {
     return freshDefaults();
   }
@@ -135,10 +107,21 @@ function spin() {
 
 function markWatched() {
   if (selectedIndex == null) return;
+
   lastState = JSON.stringify(movies);
-  movies = movies.map((m, i) => ({ ...m, weight: i === selectedIndex ? 1 : m.weight + 1 }));
+
+  movies = movies.map((m, i) => ({
+    ...m,
+    weight: m.locked
+      ? 1
+      : i === selectedIndex
+        ? 1
+        : m.weight + 1
+  }));
+
   selectedIndex = null;
   watchedBtn.disabled = true;
+
   save();
   render();
 }
