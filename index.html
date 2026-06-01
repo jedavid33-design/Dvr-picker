@@ -3,25 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Bedtime Movie Wheel</title>
+  <title>What to Watch</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <main class="app">
     <header>
-      <div class="badge">🎥 Bedtime Movie</div>
+      <div class="badge">📺What to Watch</div>
       <h1 id="winner">Tap spin</h1>
-      <p class="subtitle">Weighted by how long it’s been since each movie won.</p>
+      <p class="subtitle">Julie's DVR</p>
     </header>
 
     <section class="wheel-card">
       <div class="pointer"></div>
-      <canvas id="wheel" width="680" height="680" aria-label="Movie wheel"></canvas>
+      <canvas id="wheel" width="680" height="680" aria-label="DVR wheel"></canvas>
       <button id="spinBtn" class="primary">Spin</button>
     </section>
 
     <section class="actions">
-      <button id="watchedBtn" disabled>Watched Tonight</button>
+      <button id="watchedBtn" disabled>Watched and Keep</button>
       <button id="undoBtn">Undo</button>
       <button id="resetBtn">Reset</button>
     </section>
