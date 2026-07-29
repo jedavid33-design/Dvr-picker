@@ -18,7 +18,6 @@ const ctx = canvas.getContext("2d");
 const winnerEl = document.getElementById("winner");
 const spinBtn = document.getElementById("spinBtn");
 const watchedBtn = document.getElementById("watchedBtn");
-const deleteBtn = document.getElementById("deleteBtn");
 const undoBtn = document.getElementById("undoBtn");
 const resetBtn = document.getElementById("resetBtn");
 const movieList = document.getElementById("movieList");
@@ -87,7 +86,6 @@ function spin() {
   spinning = true;
   spinBtn.disabled = true;
   watchedBtn.disabled = true;
-  deleteBtn.disabled = true;
   winnerEl.textContent = "Spinning...";
 
   function animate(now) {
@@ -102,7 +100,6 @@ function spin() {
       winnerEl.textContent = movies[selectedIndex].title;
       spinBtn.disabled = false;
       watchedBtn.disabled = false;
-      deleteBtn.disabled = false;
       drawWheel();
     }
   }
@@ -165,7 +162,6 @@ function undo() {
   selectedIndex = null;
   winnerEl.textContent = "Undone";
   watchedBtn.disabled = true;
-deleteBtn.disabled = true;
 save();
 render();
 }
