@@ -125,31 +125,15 @@ function markWatched() {
 
   lastState = JSON.stringify(movies);
 
-  updateWeights();
-  shuffleItems();
-
-selectedIndex = null;
-  watchedBtn.disabled = true;
-  deleteBtn.disabled = true;
-
-  save();
-  render();
-}
-
-function watchedAndDelete() {
-  if (selectedIndex == null) return;
-
-  lastState = JSON.stringify(movies);
-
-  updateWeights();
-
+  // Delete the watched item.
+  // Keep the locked Second Spin entry.
   movies = movies.filter((m, i) => i !== selectedIndex || m.locked);
 
-shuffleItems();
+  shuffleItems();
 
-selectedIndex = null;
+  selectedIndex = null;
+  winnerEl.textContent = "Tap Spin";
   watchedBtn.disabled = true;
-  deleteBtn.disabled = true;
 
   save();
   render();
@@ -264,7 +248,6 @@ function render() { drawWheel(); renderList(); }
 
 spinBtn.onclick = spin;
 watchedBtn.onclick = markWatched;
-deleteBtn.onclick = watchedAndDelete;
 undoBtn.onclick = undo;
 resetBtn.onclick = () => dialog.showModal();
 document.getElementById("cancelReset").onclick = () => dialog.close();
@@ -274,7 +257,6 @@ document.getElementById("confirmReset").onclick = () => {
   selectedIndex = null;
   winnerEl.textContent = "Reset";
   watchedBtn.disabled = true;
-deleteBtn.disabled = true;
   save();
   render();
   dialog.close();
