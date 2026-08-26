@@ -358,7 +358,7 @@ function drawWheel() {
       ctx.rotate(start + arc / 2);
       ctx.textAlign = "right";
       ctx.fillStyle = "#393346";
-      ctx.font = '700 18px ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.font = '600 18px "Avenir Next", Avenir, "Helvetica Neue", ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       const label = movie.title.length > 24 ? movie.title.slice(0, 23) + "…" : movie.title;
       ctx.fillText(label, radius - 18, 7);
       ctx.restore();
