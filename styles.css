@@ -1,15 +1,23 @@
+@font-face {
+  font-family: "Quicksand";
+  src: url("Quicksand.ttf?v=1") format("truetype");
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+}
+
 :root {
-  --bg: #e8ecef;
-  --glass: rgba(250, 250, 252, .5);
-  --glass-strong: rgba(255, 255, 255, .68);
-  --ink: #292538;
-  --muted: #6e687d;
-  --plum: #71658d;
-  --plum-deep: #5d5279;
-  --line: rgba(255, 255, 255, .82);
-  --soft-line: rgba(90, 78, 116, .13);
-  --shadow: 0 18px 44px rgba(66, 55, 91, .11), inset 0 1px 0 rgba(255, 255, 255, .7);
-  --font-rounded: "Avenir Next", Avenir, "Helvetica Neue", ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bg: #f3edf4;
+  --glass: rgba(255, 252, 255, .58);
+  --glass-strong: rgba(255, 253, 255, .72);
+  --ink: #382c40;
+  --muted: #786b7d;
+  --plum: #9a4f7a;
+  --plum-deep: #7b2d5c;
+  --line: rgba(255, 255, 255, .9);
+  --soft-line: rgba(92, 62, 91, .12);
+  --shadow: 0 18px 42px rgba(88, 58, 91, .1), inset 0 1px 0 rgba(255, 255, 255, .82);
+  --font-rounded: "Quicksand", "Avenir Next", ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -20,13 +28,12 @@ body {
   font-family: var(--font-rounded);
   color: var(--ink);
   background:
-    radial-gradient(ellipse at -8% 4%, rgba(174, 208, 215, .86) 0, transparent 34%),
-    radial-gradient(ellipse at 82% -6%, rgba(207, 190, 226, .84) 0, transparent 34%),
-    radial-gradient(ellipse at 106% 34%, rgba(231, 194, 207, .72) 0, transparent 32%),
-    radial-gradient(ellipse at -4% 58%, rgba(191, 217, 203, .76) 0, transparent 34%),
-    radial-gradient(ellipse at 78% 72%, rgba(237, 215, 179, .68) 0, transparent 35%),
-    radial-gradient(ellipse at 22% 98%, rgba(190, 193, 225, .78) 0, transparent 36%),
-    linear-gradient(145deg, #edf2f1, #e7eaf1 48%, #f1ebef);
+    radial-gradient(ellipse at 94% 3%, rgba(231, 178, 205, .78) 0, transparent 36%),
+    radial-gradient(ellipse at -8% 30%, rgba(174, 218, 221, .82) 0, transparent 39%),
+    radial-gradient(ellipse at 92% 48%, rgba(211, 190, 232, .68) 0, transparent 38%),
+    radial-gradient(ellipse at 6% 78%, rgba(195, 216, 231, .7) 0, transparent 38%),
+    radial-gradient(ellipse at 76% 98%, rgba(209, 194, 232, .78) 0, transparent 42%),
+    linear-gradient(150deg, #f7f0f5, #edf5f4 45%, #f0ebf7);
   background-attachment: fixed;
 }
 
@@ -45,12 +52,12 @@ header { text-align: center; padding: 6px 0 12px; }
   padding: 10px 17px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, .54);
-  color: var(--plum-deep);
+  background: rgba(255, 252, 255, .6);
+  color: #68556e;
   font-size: 1.08rem;
   font-weight: 650;
   letter-spacing: .01em;
-  box-shadow: 0 8px 24px rgba(71, 59, 96, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
+  box-shadow: 0 7px 20px rgba(102, 63, 100, .08), inset 0 1px 0 rgba(255, 255, 255, .92);
   backdrop-filter: blur(18px) saturate(120%);
   -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
@@ -62,9 +69,9 @@ header { text-align: center; padding: 6px 0 12px; }
   max-width: 680px;
   color: var(--ink);
   font-size: clamp(2rem, 7vw, 3.45rem);
-  font-weight: 650;
+  font-weight: 450;
   line-height: 1.05;
-  letter-spacing: -.035em;
+  letter-spacing: -.025em;
   text-wrap: balance;
 }
 
@@ -85,10 +92,10 @@ header { text-align: center; padding: 6px 0 12px; }
   border: 1px solid var(--line);
   border-radius: 32px;
   background:
-    radial-gradient(ellipse at 5% 8%, rgba(190, 220, 218, .28), transparent 34%),
-    radial-gradient(ellipse at 94% 14%, rgba(216, 195, 225, .3), transparent 34%),
-    radial-gradient(ellipse at 78% 94%, rgba(239, 216, 181, .25), transparent 36%),
-    linear-gradient(145deg, rgba(255, 255, 255, .68), rgba(246, 244, 250, .44));
+    radial-gradient(ellipse at 4% 7%, rgba(185, 224, 222, .2), transparent 36%),
+    radial-gradient(ellipse at 96% 10%, rgba(229, 191, 216, .2), transparent 35%),
+    radial-gradient(ellipse at 80% 96%, rgba(211, 195, 235, .2), transparent 38%),
+    linear-gradient(145deg, rgba(255, 254, 255, .73), rgba(250, 247, 252, .52));
   box-shadow: var(--shadow);
   backdrop-filter: blur(24px) saturate(125%);
   -webkit-backdrop-filter: blur(24px) saturate(125%);
@@ -128,20 +135,29 @@ canvas.dragging { cursor: grabbing; }
   top: 0;
   left: 50%;
   z-index: 3;
-  width: 0;
-  height: 0;
-  border-top: 34px solid var(--plum-deep);
-  border-right: 19px solid transparent;
-  border-left: 19px solid transparent;
+  width: 48px;
+  height: 45px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .55) 0 7%, transparent 30%),
+    linear-gradient(135deg, #b76894 0%, #8a396c 48%, #61204c 100%);
+  clip-path: polygon(7% 0, 93% 0, 50% 100%);
   transform: translateX(-50%);
-  filter: drop-shadow(0 3px 4px rgba(55, 47, 73, .16));
+  filter: drop-shadow(0 5px 4px rgba(78, 35, 67, .24)) drop-shadow(0 1px 0 rgba(255, 255, 255, .65));
+}
+
+.pointer::after {
+  content: "";
+  position: absolute;
+  inset: 4px 8px 12px 8px;
+  background: linear-gradient(155deg, rgba(255, 255, 255, .48), rgba(255, 255, 255, 0) 62%);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
 button {
   border: 1px solid rgba(255, 255, 255, .78);
   border-radius: 999px;
   padding: 13px 20px;
-  color: var(--ink);
+  color: #5f4d67;
   background:
     radial-gradient(ellipse at 15% 10%, rgba(203, 226, 222, .32), transparent 44%),
     radial-gradient(ellipse at 88% 90%, rgba(216, 202, 231, .28), transparent 46%),
@@ -163,12 +179,15 @@ button:disabled { opacity: .46; cursor: default; }
   min-width: 180px;
   color: #fff;
   border-color: rgba(255, 255, 255, .35);
-  background: linear-gradient(145deg, #82749e, #657f9e);
-  box-shadow: 0 9px 22px rgba(85, 72, 112, .2), inset 0 1px 0 rgba(255, 255, 255, .28);
+  background:
+    radial-gradient(circle at 18% 45%, rgba(255, 255, 255, .34), transparent 28%),
+    linear-gradient(105deg, #c98be6 0%, #9c8de3 47%, #8bbce2 100%);
+  box-shadow: 0 10px 24px rgba(112, 79, 154, .2), inset 0 1px 0 rgba(255, 255, 255, .55);
   font-size: 1.18rem;
+  font-weight: 500;
 }
 
-.primary:hover:not(:disabled) { background: linear-gradient(145deg, #76688f, #5b7492); }
+.primary:hover:not(:disabled) { filter: brightness(1.03); }
 
 .spin-hint {
   margin: -7px 0 0;
@@ -186,7 +205,7 @@ button:disabled { opacity: .46; cursor: default; }
 
 .list-card, .edit-card { padding: 19px; margin-top: 14px; }
 .list-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-h2 { margin: 0 0 12px; font-size: 1.28rem; font-weight: 650; letter-spacing: -.015em; }
+h2 { margin: 0 0 12px; font-size: 1.28rem; font-weight: 550; letter-spacing: -.015em; }
 #totalSlices { color: var(--muted); font-weight: 600; }
 
 .movie-row {
