@@ -20,13 +20,14 @@
     <section class="wheel-card">
       <div class="wheel-stage">
         <div class="pointer"></div>
-        <canvas id="wheel" width="680" height="680" aria-label="DVR wheel"></canvas>
+        <canvas id="wheel" width="680" height="680" aria-label="DVR wheel. Drag with your finger to spin manually."></canvas>
       </div>
       <button id="spinBtn" class="primary">Spin</button>
+      <p class="spin-hint">Tap Spin or drag the wheel</p>
     </section>
 
     <section class="actions">
-      <button id="watchedBtn">Watched</button>
+      <button id="watchedBtn" disabled>Watched</button>
       <button id="undoBtn">Undo</button>
       <button id="resetBtn">Reset</button>
       <button id="increaseAllBtn">+1 All Values</button>
@@ -58,6 +59,6 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
