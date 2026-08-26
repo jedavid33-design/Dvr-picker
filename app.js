@@ -5,7 +5,7 @@ const defaultMovies = [
   "🎲 Second Spin"
 ];
 
-const colors = ["#a9c1b2", "#edd49f", "#e4ae99", "#e8bab0", "#a9a8c8", "#abc0d2", "#a4bdad", "#ebcf93", "#e9b3a0", "#c4b2dc"];
+const colors = ["#99b8bb", "#b4a4c7", "#8fb3c0", "#c4a3b1", "#aaa5c9", "#8bb4aa", "#b8a68d", "#9aa9cf", "#bda0bc", "#86afc0"];
 const storageKey = "bedtimeMovieWheel.v2";
 let movies = load();
 let lastState = null;
@@ -26,6 +26,13 @@ const newMovie = document.getElementById("newMovie");
 const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
 const increaseAllBtn = document.getElementById("increaseAllBtn");
+
+function setWinner(text) {
+  winnerEl.textContent = text;
+  const length = Array.from(text).length;
+  winnerEl.classList.toggle("long-title", length >= 22);
+  winnerEl.classList.toggle("very-long-title", length >= 36);
+}
 
 function freshDefaults() {
   return defaultMovies.map(title => ({
@@ -86,7 +93,7 @@ function spin() {
   spinning = true;
   spinBtn.disabled = true;
   watchedBtn.disabled = true;
-  winnerEl.textContent = "Spinning...";
+  setWinner("Spinning...");
 
   function animate(now) {
     const t = Math.min(1, (now - startTime) / duration);
@@ -97,7 +104,7 @@ function spin() {
     else {
       spinning = false;
       rotation = targetRotation % (Math.PI * 2);
-      winnerEl.textContent = movies[selectedIndex].title;
+      setWinner(movies[selectedIndex].title);
       spinBtn.disabled = false;
       watchedBtn.disabled = false;
       drawWheel();
@@ -129,7 +136,7 @@ function markWatched() {
   shuffleItems();
 
   selectedIndex = null;
-  winnerEl.textContent = "Tap Spin";
+  setWinner("Tap Spin");
   watchedBtn.disabled = true;
 
   save();
@@ -160,7 +167,7 @@ function undo() {
   movies = JSON.parse(lastState);
   lastState = null;
   selectedIndex = null;
-  winnerEl.textContent = "Undone";
+  setWinner("Undone");
   watchedBtn.disabled = true;
 save();
 render();
@@ -197,8 +204,8 @@ function drawWheel() {
       ctx.translate(cx, cy);
       ctx.rotate(start + arc / 2);
       ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(255,255,255,.95)";
-      ctx.font = "700 18px system-ui, sans-serif";
+      ctx.fillStyle = "#393346";
+      ctx.font = '700 18px ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       const label = movie.title.length > 24 ? movie.title.slice(0, 23) + "…" : movie.title;
       ctx.fillText(label, radius - 18, 7);
       ctx.restore();
@@ -207,9 +214,38 @@ function drawWheel() {
   });
   ctx.restore();
 
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.clip();
+  const sheen = ctx.createRadialGradient(
+    size * .28, size * .22, size * .03,
+    size * .52, size * .52, radius
+  );
+  sheen.addColorStop(0, "rgba(255,255,255,.34)");
+  sheen.addColorStop(.34, "rgba(255,255,255,.09)");
+  sheen.addColorStop(.72, "rgba(231,225,243,.04)");
+  sheen.addColorStop(1, "rgba(74,65,97,.13)");
+  ctx.fillStyle = sheen;
+  ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(255,255,255,.72)";
+  ctx.stroke();
+
   ctx.beginPath();
   ctx.arc(cx, cy, size * .13, 0, Math.PI * 2);
-  ctx.fillStyle = "white";
+  const hub = ctx.createRadialGradient(
+    cx - size * .035, cy - size * .045, size * .01,
+    cx, cy, size * .13
+  );
+  hub.addColorStop(0, "rgba(255,255,255,.98)");
+  hub.addColorStop(.55, "rgba(248,246,250,.94)");
+  hub.addColorStop(1, "rgba(225,223,235,.94)");
+  ctx.fillStyle = hub;
   ctx.fill();
   ctx.lineWidth = 12;
   ctx.strokeStyle = "#ddd9df";
@@ -251,7 +287,7 @@ document.getElementById("confirmReset").onclick = () => {
   lastState = JSON.stringify(movies);
   movies = freshDefaults();
   selectedIndex = null;
-  winnerEl.textContent = "Reset";
+  setWinner("Reset");
   watchedBtn.disabled = true;
   save();
   render();
