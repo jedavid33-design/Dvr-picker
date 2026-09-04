@@ -12,6 +12,8 @@ const trackedShowsStorageKey = "dvrPicker.trackedShows.v1";
 const discoveriesStorageKey = "dvrPicker.discoveries.v1";
 const workerUrlStorageKey = "dvrPicker.workerUrl.v1";
 const lastTvCheckStorageKey = "dvrPicker.lastTvCheck.v1";
+const lastTvEpisodeDateStorageKey = "dvrPicker.lastTvEpisodeDate.v1";
+const lastFranchiseCheckStorageKey = "dvrPicker.lastFranchiseCheck.v1";
 let movies = load();
 let lastState = null;
 let selectedIndex = null;
@@ -49,6 +51,7 @@ const trackedSearchResults = document.getElementById("trackedSearchResults");
 const workerUrlInput = document.getElementById("workerUrlInput");
 const saveWorkerBtn = document.getElementById("saveWorkerBtn");
 const workerStatus = document.getElementById("workerStatus");
+const franchiseCandidateList = document.getElementById("franchiseCandidateList");
 
 let trackedShows = loadJsonArray(trackedShowsStorageKey);
 let discoveries = loadJsonArray(discoveriesStorageKey);
@@ -544,6 +547,27 @@ function localDateString(date) {
   return `${y}-${m}-${d}`;
 }
 
+function parseLocalDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDays(value, count) {
+  const date = typeof value === "string" ? parseLocalDate(value) : new Date(value);
+  if (!date) return null;
+  date.setDate(date.getDate() + count);
+  return localDateString(date);
+}
+
+function daysBetween(fromValue, toValue) {
+  const from = parseLocalDate(fromValue);
+  const to = parseLocalDate(toValue);
+  if (!from || !to) return 0;
+  return Math.round((to - from) / 86400000);
+}
+
 function yesterdayString() {
   const date = new Date();
   date.setDate(date.getDate() - 1);
@@ -575,26 +599,35 @@ function episodeWheelTitle(ep) {
   return parts.filter(Boolean).join(" · ");
 }
 
-function pendingDiscoveries() {
-  return discoveries.filter(item => item.status !== "added" && item.status !== "dismissed");
+function pendingEpisodeDiscoveries() {
+  return discoveries.filter(item => (item.kind || "episode") === "episode" && item.status !== "added" && item.status !== "dismissed");
+}
+
+function pendingFranchiseCandidates() {
+  return discoveries.filter(item => item.kind === "series-candidate" && item.status !== "added" && item.status !== "dismissed");
 }
 
 function renderDiscoveries() {
   discoveryList.innerHTML = "";
-  const pending = pendingDiscoveries();
+  franchiseCandidateList.innerHTML = "";
+  const pending = pendingEpisodeDiscoveries();
+  const franchisePending = pendingFranchiseCandidates();
   discoveryActions.hidden = pending.length === 0;
 
   if (!getWorkerUrl()) {
-    tvDiscoveryStatus.textContent = "Connect the TV search to check yesterday automatically.";
+    tvDiscoveryStatus.textContent = "Connect the TV search to check for new episodes automatically.";
   } else if (!trackedShows.length) {
-    tvDiscoveryStatus.textContent = "Add a tracked show below, then I’ll check yesterday automatically.";
-  } else if (!pending.length) {
-    const checked = localStorage.getItem(lastTvCheckStorageKey);
-    tvDiscoveryStatus.textContent = checked === todayString()
-      ? "Checked yesterday. Nothing waiting for review."
+    tvDiscoveryStatus.textContent = "Add a tracked show below, then I’ll check automatically.";
+  } else if (!pending.length && !franchisePending.length) {
+    const checkedThrough = localStorage.getItem(lastTvEpisodeDateStorageKey);
+    tvDiscoveryStatus.textContent = checkedThrough
+      ? `Caught up through ${formatAirdate(checkedThrough)}. Nothing waiting for review.`
       : "Ready to check yesterday.";
   } else {
-    tvDiscoveryStatus.textContent = `${pending.length} new episode${pending.length === 1 ? "" : "s"} waiting for review.`;
+    const bits = [];
+    if (pending.length) bits.push(`${pending.length} new episode${pending.length === 1 ? "" : "s"}`);
+    if (franchisePending.length) bits.push(`${franchisePending.length} possible spinoff${franchisePending.length === 1 ? "" : "s"}`);
+    tvDiscoveryStatus.textContent = `${bits.join(" and ")} waiting for review.`;
   }
 
   pending.forEach(ep => {
@@ -629,11 +662,39 @@ function renderDiscoveries() {
     row.append(main, buttons);
     discoveryList.appendChild(row);
   });
+
+  franchisePending.forEach(candidate => {
+    const row = document.createElement("div");
+    row.className = "discovery-row franchise-candidate-row";
+    const main = document.createElement("div");
+    main.className = "discovery-main";
+    const show = document.createElement("div");
+    show.className = "discovery-show";
+    show.textContent = candidate.show || "Possible spinoff";
+    const meta = document.createElement("div");
+    meta.className = "discovery-meta";
+    const source = candidate.franchiseTitle ? `Possible ${candidate.franchiseTitle} franchise match` : "Possible franchise match";
+    const detail = [source, candidate.network, candidate.premiered ? `started ${String(candidate.premiered).slice(0, 4)}` : ""].filter(Boolean);
+    meta.textContent = detail.join(" · ");
+    main.append(show, meta);
+    const buttons = document.createElement("div");
+    buttons.className = "discovery-buttons";
+    const track = document.createElement("button");
+    track.textContent = "Track";
+    track.onclick = () => approveFranchiseCandidate(candidate.id);
+    const ignore = document.createElement("button");
+    ignore.className = "quiet-btn";
+    ignore.textContent = "Ignore";
+    ignore.onclick = () => dismissDiscovery(candidate.id);
+    buttons.append(track, ignore);
+    row.append(main, buttons);
+    franchiseCandidateList.appendChild(row);
+  });
 }
 
 function addDiscoveryToWheel(id) {
   const ep = discoveries.find(item => item.id === id);
-  if (!ep || ep.status === "added") return;
+  if (!ep || ep.status === "added" || ep.kind === "series-candidate") return;
 
   // Preservation rule: append only. Do not shuffle, reset, reweight, or migrate.
   lastState = JSON.stringify(movies);
@@ -656,7 +717,7 @@ function dismissDiscovery(id) {
 }
 
 function addAllDiscoveries() {
-  const pending = pendingDiscoveries();
+  const pending = pendingEpisodeDiscoveries();
   if (!pending.length) return;
   lastState = JSON.stringify(movies);
   for (const ep of pending) {
@@ -671,11 +732,31 @@ function addAllDiscoveries() {
 }
 
 function dismissAllDiscoveries() {
-  for (const ep of pendingDiscoveries()) {
+  for (const ep of pendingEpisodeDiscoveries()) {
     ep.status = "dismissed";
     ep.reviewedAt = new Date().toISOString();
   }
   saveDiscoveries();
+  renderDiscoveries();
+}
+
+function approveFranchiseCandidate(id) {
+  const candidate = discoveries.find(item => item.id === id && item.kind === "series-candidate");
+  if (!candidate) return;
+  if (!trackedShows.some(item => Number(item.tvmazeId) === Number(candidate.tvmazeId))) {
+    trackedShows.push({
+      title: candidate.show,
+      canonicalName: candidate.show,
+      tvmazeId: candidate.tvmazeId,
+      network: candidate.network || null,
+      kind: "show"
+    });
+    saveTrackedShows();
+  }
+  candidate.status = "added";
+  candidate.reviewedAt = new Date().toISOString();
+  saveDiscoveries();
+  renderTrackedShows();
   renderDiscoveries();
 }
 
@@ -698,8 +779,21 @@ function renderTrackedShows() {
     name.textContent = item.canonicalName || item.title;
     const detail = document.createElement("div");
     detail.className = "tracked-detail";
-    detail.textContent = item.network || (item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "Tracked");
+    const franchise = item.kind === "franchise" ? "Franchise watch" : "Show";
+    detail.textContent = [franchise, item.network || (item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "Tracked")].filter(Boolean).join(" · ");
     info.append(name, detail);
+
+    const controls = document.createElement("div");
+    controls.className = "tracked-controls";
+    const franchiseToggle = document.createElement("button");
+    franchiseToggle.className = "quiet-btn";
+    franchiseToggle.textContent = item.kind === "franchise" ? "Show only" : "Watch franchise";
+    franchiseToggle.onclick = () => {
+      item.kind = item.kind === "franchise" ? "show" : "franchise";
+      saveTrackedShows();
+      renderTrackedShows();
+      if (item.kind === "franchise") checkFranchiseCandidates({ force: true });
+    };
     const remove = document.createElement("button");
     remove.className = "quiet-btn";
     remove.textContent = "Remove";
@@ -709,7 +803,8 @@ function renderTrackedShows() {
       renderTrackedShows();
       renderDiscoveries();
     };
-    row.append(info, remove);
+    controls.append(franchiseToggle, remove);
+    row.append(info, controls);
     trackedShowList.appendChild(row);
   });
 }
@@ -750,23 +845,17 @@ async function searchTrackedShow() {
       detail.className = "search-result-detail";
       detail.textContent = [result.network, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status].filter(Boolean).join(" · ");
       info.append(name, detail);
-      const add = document.createElement("button");
-      add.textContent = "Track";
-      add.onclick = () => {
-        if (trackedShows.some(item => Number(item.tvmazeId) === Number(result.id))) return;
-        trackedShows.push({
-          title: result.name,
-          canonicalName: result.name,
-          tvmazeId: result.id,
-          network: result.network || null
-        });
-        saveTrackedShows();
-        trackedShowInput.value = "";
-        trackedSearchResults.innerHTML = "";
-        renderTrackedShows();
-        renderDiscoveries();
-      };
-      row.append(info, add);
+      const buttons = document.createElement("div");
+      buttons.className = "search-result-buttons";
+      const track = document.createElement("button");
+      track.textContent = "Track";
+      track.onclick = () => addTrackedResult(result, "show");
+      const franchise = document.createElement("button");
+      franchise.className = "quiet-btn";
+      franchise.textContent = "Track franchise";
+      franchise.onclick = () => addTrackedResult(result, "franchise");
+      buttons.append(track, franchise);
+      row.append(info, buttons);
       trackedSearchResults.appendChild(row);
     });
   } catch (error) {
@@ -781,6 +870,27 @@ async function searchTrackedShow() {
   }
 }
 
+function addTrackedResult(result, kind) {
+  const existing = trackedShows.find(item => Number(item.tvmazeId) === Number(result.id));
+  if (existing) {
+    if (kind === "franchise") existing.kind = "franchise";
+  } else {
+    trackedShows.push({
+      title: result.name,
+      canonicalName: result.name,
+      tvmazeId: result.id,
+      network: result.network || null,
+      kind
+    });
+  }
+  saveTrackedShows();
+  trackedShowInput.value = "";
+  trackedSearchResults.innerHTML = "";
+  renderTrackedShows();
+  renderDiscoveries();
+  if (kind === "franchise") checkFranchiseCandidates({ force: true });
+}
+
 function mergeDiscoveries(incoming) {
   const byId = new Map(discoveries.map(item => [item.id, item]));
   for (const ep of incoming || []) {
@@ -788,8 +898,51 @@ function mergeDiscoveries(incoming) {
     const previous = byId.get(ep.id);
     byId.set(ep.id, previous ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt } : { ...ep, status: "pending" });
   }
-  discoveries = Array.from(byId.values()).slice(-500);
+  discoveries = Array.from(byId.values()).slice(-800);
   saveDiscoveries();
+}
+
+function migrateOldCheckState() {
+  if (localStorage.getItem(lastTvEpisodeDateStorageKey)) return;
+  const oldCheck = localStorage.getItem(lastTvCheckStorageKey);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(oldCheck || "")) return;
+  const oldEpisodeDate = addDays(oldCheck, -1);
+  if (oldEpisodeDate) localStorage.setItem(lastTvEpisodeDateStorageKey, oldEpisodeDate);
+}
+
+function catchUpDates() {
+  const yesterday = yesterdayString();
+  const last = localStorage.getItem(lastTvEpisodeDateStorageKey);
+  if (!last || !parseLocalDate(last)) return [yesterday];
+  if (last >= yesterday) return [];
+  let start = addDays(last, 1);
+  const gap = daysBetween(start, yesterday);
+  if (gap > 29) start = addDays(yesterday, -29);
+  const dates = [];
+  for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) dates.push(cursor);
+  return dates;
+}
+
+async function discoverDate(date) {
+  const payload = await workerFetch("/api/discover", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ date, shows: trackedShows })
+  });
+  mergeDiscoveries(payload.episodes || []);
+  if (Array.isArray(payload.resolvedShows)) {
+    for (const resolved of payload.resolvedShows) {
+      const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
+      if (item && resolved.tvmazeId) {
+        item.tvmazeId = resolved.tvmazeId;
+        item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
+      }
+    }
+    saveTrackedShows();
+  }
+  localStorage.setItem(lastTvEpisodeDateStorageKey, date);
+  localStorage.setItem(lastTvCheckStorageKey, todayString());
+  return payload;
 }
 
 async function discoverYesterday({ automatic = false } = {}) {
@@ -799,27 +952,8 @@ async function discoverYesterday({ automatic = false } = {}) {
   checkTvBtn.textContent = "Checking…";
   tvDiscoveryStatus.textContent = `Checking ${formatAirdate(yesterdayString())}…`;
   try {
-    const payload = await workerFetch("/api/discover", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ date: yesterdayString(), shows: trackedShows })
-    });
-
-    mergeDiscoveries(payload.episodes || []);
-
-    if (Array.isArray(payload.resolvedShows)) {
-      for (const resolved of payload.resolvedShows) {
-        const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
-        if (item && resolved.tvmazeId) {
-          item.tvmazeId = resolved.tvmazeId;
-          item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
-        }
-      }
-      saveTrackedShows();
-      renderTrackedShows();
-    }
-
-    localStorage.setItem(lastTvCheckStorageKey, todayString());
+    await discoverDate(yesterdayString());
+    renderTrackedShows();
     renderDiscoveries();
   } catch (error) {
     tvDiscoveryStatus.textContent = automatic ? `Automatic check skipped: ${error.message}` : error.message;
@@ -827,6 +961,59 @@ async function discoverYesterday({ automatic = false } = {}) {
     tvSearchBusy = false;
     checkTvBtn.disabled = false;
     checkTvBtn.textContent = "Check yesterday";
+  }
+}
+
+async function catchUpDiscoveries({ automatic = false } = {}) {
+  if (tvSearchBusy || !getWorkerUrl() || !trackedShows.length) return;
+  const dates = catchUpDates();
+  if (!dates.length) {
+    renderDiscoveries();
+    await checkFranchiseCandidates();
+    return;
+  }
+  tvSearchBusy = true;
+  checkTvBtn.disabled = true;
+  checkTvBtn.textContent = "Catching up…";
+  try {
+    for (let i = 0; i < dates.length; i++) {
+      const date = dates[i];
+      tvDiscoveryStatus.textContent = dates.length === 1
+        ? `Checking ${formatAirdate(date)}…`
+        : `Catching up ${i + 1} of ${dates.length} · ${formatAirdate(date)}…`;
+      await discoverDate(date);
+    }
+    renderTrackedShows();
+    renderDiscoveries();
+  } catch (error) {
+    tvDiscoveryStatus.textContent = automatic ? `Automatic catch-up paused: ${error.message}` : error.message;
+  } finally {
+    tvSearchBusy = false;
+    checkTvBtn.disabled = false;
+    checkTvBtn.textContent = "Check yesterday";
+  }
+  await checkFranchiseCandidates();
+}
+
+async function checkFranchiseCandidates({ force = false } = {}) {
+  const franchises = trackedShows.filter(item => item.kind === "franchise" && item.tvmazeId);
+  if (!franchises.length || !getWorkerUrl()) return;
+  const last = localStorage.getItem(lastFranchiseCheckStorageKey);
+  if (!force && last && daysBetween(last, todayString()) < 7) return;
+  try {
+    const payload = await workerFetch("/api/franchise-candidates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        franchises,
+        trackedIds: trackedShows.map(item => Number(item.tvmazeId)).filter(Boolean)
+      })
+    });
+    mergeDiscoveries(payload.candidates || []);
+    localStorage.setItem(lastFranchiseCheckStorageKey, todayString());
+    renderDiscoveries();
+  } catch {
+    // Franchise discovery is helpful, but never allowed to break episode checks.
   }
 }
 
@@ -850,6 +1037,7 @@ async function saveAndTestWorker() {
 }
 
 function initTvDiscovery() {
+  migrateOldCheckState();
   workerUrlInput.value = getWorkerUrl();
   renderTrackedShows();
   renderDiscoveries();
@@ -863,10 +1051,10 @@ function initTvDiscovery() {
   });
   saveWorkerBtn.onclick = saveAndTestWorker;
 
-  // At most one automatic lookup per local calendar day. No wheel state changes
-  // occur until Julie explicitly approves a discovery.
-  if (getWorkerUrl() && trackedShows.length && localStorage.getItem(lastTvCheckStorageKey) !== todayString()) {
-    discoverYesterday({ automatic: true });
+  // Catch up every missed airdate, up to 30 days, when the app opens.
+  // No wheel state changes occur until Julie explicitly approves an episode.
+  if (getWorkerUrl() && trackedShows.length) {
+    catchUpDiscoveries({ automatic: true });
   }
 }
 
