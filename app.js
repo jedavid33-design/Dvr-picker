@@ -760,6 +760,7 @@ function approveFranchiseCandidate(id) {
   if (!trackedShows.some(item =>
     (candidate.tvmazeId && Number(item.tvmazeId) === Number(candidate.tvmazeId)) ||
     (candidate.episodateId && Number(item.episodateId) === Number(candidate.episodateId)) ||
+    (candidate.tvdbId && Number(item.tvdbId) === Number(candidate.tvdbId)) ||
     normalizeTrackedName(item.title) === normalizeTrackedName(candidate.show)
   )) {
     trackedShows.push({
@@ -767,6 +768,7 @@ function approveFranchiseCandidate(id) {
       canonicalName: candidate.show,
       tvmazeId: candidate.tvmazeId || null,
       episodateId: candidate.episodateId || null,
+      tvdbId: candidate.tvdbId || null,
       network: candidate.network || null,
       kind: "show"
     });
@@ -799,7 +801,7 @@ function renderTrackedShows() {
     const detail = document.createElement("div");
     detail.className = "tracked-detail";
     const franchise = item.kind === "franchise" ? "Franchise watch" : "Show";
-    detail.textContent = [franchise, item.network, item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "", item.episodateId ? `EpisoDate #${item.episodateId}` : ""].filter(Boolean).join(" · ");
+    detail.textContent = [franchise, item.network, item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "", item.episodateId ? `EpisoDate #${item.episodateId}` : "", item.tvdbId ? `TVDB #${item.tvdbId}` : ""].filter(Boolean).join(" · ");
     info.append(name, detail);
 
     const controls = document.createElement("div");
@@ -862,7 +864,7 @@ async function searchTrackedShow() {
       name.textContent = result.name;
       const detail = document.createElement("div");
       detail.className = "search-result-detail";
-      detail.textContent = [result.network, result.country, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status, result.source === "episodate" ? "EpisoDate fallback" : "TVmaze"].filter(Boolean).join(" · ");
+      detail.textContent = [result.network, result.country, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status, result.source === "episodate" ? "EpisoDate fallback" : result.source === "tvdb" ? "TheTVDB fallback" : "TVmaze"].filter(Boolean).join(" · ");
       info.append(name, detail);
       const buttons = document.createElement("div");
       buttons.className = "search-result-buttons";
@@ -892,15 +894,18 @@ async function searchTrackedShow() {
 function addTrackedResult(result, kind) {
   const tvmazeId = Number(result.tvmazeId || (result.source === "tvmaze" ? String(result.id).replace(/^tvmaze:/, "") : 0)) || null;
   const episodateId = Number(result.episodateId || (result.source === "episodate" ? String(result.id).replace(/^episodate:/, "") : 0)) || null;
+  const tvdbId = Number(result.tvdbId || (result.source === "tvdb" ? String(result.id).replace(/^tvdb:/, "") : 0)) || null;
   const existing = trackedShows.find(item =>
     (tvmazeId && Number(item.tvmazeId) === tvmazeId) ||
     (episodateId && Number(item.episodateId) === episodateId) ||
+    (tvdbId && Number(item.tvdbId) === tvdbId) ||
     normalizeTrackedName(item.title) === normalizeTrackedName(result.name)
   );
   if (existing) {
     if (kind === "franchise") existing.kind = "franchise";
     if (tvmazeId) existing.tvmazeId = tvmazeId;
     if (episodateId) existing.episodateId = episodateId;
+    if (tvdbId) existing.tvdbId = tvdbId;
     existing.canonicalName = result.name || existing.canonicalName || existing.title;
   } else {
     trackedShows.push({
@@ -908,6 +913,7 @@ function addTrackedResult(result, kind) {
       canonicalName: result.name,
       tvmazeId,
       episodateId,
+      tvdbId,
       network: result.network || null,
       kind
     });
@@ -969,6 +975,7 @@ async function discoverDate(date) {
       if (item) {
         if (resolved.tvmazeId) item.tvmazeId = resolved.tvmazeId;
         if (resolved.episodateId) item.episodateId = resolved.episodateId;
+        if (resolved.tvdbId) item.tvdbId = resolved.tvdbId;
         item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
       }
     }

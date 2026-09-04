@@ -1,30 +1,44 @@
-DVR WHEEL v0.2.3 - DEPLOY NOTES
+DVR WHEEL v0.2.4 - DEPLOY NOTES
 
 Frontend
 - Upload index.html, app.js, styles.css, icon.PNG, Quicksand.ttf and OFL.txt to the existing GitHub Pages repo.
 - Do not delete browser storage or reset the wheel.
-- The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order, and weights are not migrated or recalculated.
+- The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order and weights are not migrated or recalculated.
 
 Worker
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
+- Add a Cloudflare Worker secret named TVDB_API_KEY containing your TheTVDB v4 API key.
+- In the Cloudflare dashboard this belongs under the Worker's Settings -> Variables and Secrets. Create it as a SECRET, not a plain-text frontend variable.
 - If you use the Cloudflare web editor, wrangler.toml is not needed for deployment.
-- GET /health is public and should report version 0.2.3.
-- This build intentionally uses TVmaze only. No API key is required.
+- GET /health is public and should report version 0.2.4.
+- /health reports tvdbFallback:true when TVDB_API_KEY is present. It never returns the key or token.
 
-What changed in v0.2.3
-- Tracked TV is now collapsible with the same native arrow behavior as TV Connection.
-- Its expanded/collapsed state is remembered locally on the device.
+Metadata fallback order
+1. TVmaze (primary)
+2. EpisoDate (no-key fallback)
+3. TheTVDB (keyed fallback, only used for episode discovery when the first two return no episode for that tracked show/date)
 
-What changed in v0.2.1
-- Automatic missed-day catch-up when the app opens.
-- Remembers the last successfully checked airdate, not merely the day the app was opened.
-- Checks up to 30 missed days, oldest to newest.
-- A failed date stops catch-up there so it can safely retry next time.
-- Manual “Check yesterday” remains available.
-- Franchise Watch can be enabled on any tracked show.
-- Franchise Watch scans weekly for possible future/new spinoffs using TVmaze title-family and shared-principal-cast signals.
-- Possible spinoffs require explicit Track or Ignore approval. They are never added to the wheel automatically.
-- Existing dismissed/added discoveries remain remembered.
+TheTVDB
+- TheTVDB API v4 is authenticated server-side by the Worker.
+- The API key is never sent to the browser.
+- The Worker exchanges the key for a bearer token and caches that token in Worker memory, refreshing it early.
+- Visible attribution is included in Tracked TV: "Metadata provided by TheTVDB."
+
+What changed in v0.2.4
+- Added TheTVDB as a third metadata fallback.
+- TheTVDB participates in tracked-show search when configured.
+- Exact-title provider identity can save a tvdbId alongside TVmaze/EpisoDate IDs.
+- If TVmaze and EpisoDate both have no episode for the requested date, the Worker can query TheTVDB for the exact tracked series.
+- Franchise Watch also uses TheTVDB search as a third net for new/missing spinoffs.
+- /health exposes only whether TVDB fallback is configured, never credentials.
+- Existing wheel storage and weights remain untouched.
+
+Existing TV behavior retained
+- Automatic missed-day catch-up on app open, up to 30 missed days.
+- Manual Check yesterday.
+- Franchise Watch candidates require Track/Ignore approval.
+- Exact show identity lock once provider IDs are learned.
+- Tracked TV is collapsible.
 
 Storage design
 - Existing wheel: bedtimeMovieWheel.v2 (UNCHANGED)
@@ -33,11 +47,7 @@ Storage design
 - Worker URL: dvrPicker.workerUrl.v1
 - Last successfully checked airdate: dvrPicker.lastTvEpisodeDate.v1
 - Franchise scan date: dvrPicker.lastFranchiseCheck.v1
-- Existing v0.2.0 check state is migrated only into the new TV-check key. Wheel storage is never migrated.
 
 Wheel preservation rule
 - Approving a discovered episode appends exactly one new wheel item at weight 1.
-- It does not shuffle, reorder, reset, increase, decrease, or otherwise modify any existing wheel item or weight.
-
-
-v0.2.3: exact provider identity lock for tracked shows; EpisoDate no-key fallback for missing shows/episodes and franchise discovery. Existing wheel localStorage key and weights are unchanged.
+- It does not shuffle, reorder, reset, increase, decrease or otherwise modify any existing wheel item or weight.

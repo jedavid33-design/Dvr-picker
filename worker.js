@@ -1,7 +1,7 @@
 /**
  * DVR Wheel TV metadata Worker
  * Primary source: TVmaze public API
- * TVmaze-only evaluation build. No API key required.
+ * Fallback chain: TVmaze -> EpisoDate -> TheTVDB (when TVDB_API_KEY is configured).
  *
  * Routes:
  *   GET  /health
@@ -11,10 +11,11 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.3";
+const UA = "DVR-Wheel/0.2.4";
 const EPISODATE = "https://www.episodate.com/api";
+const TVDB = "https://api4.thetvdb.com/v4";
 
 export default {
   async fetch(request, env) {
@@ -32,14 +33,16 @@ export default {
           catchUp: true,
           franchiseWatch: true,
           episodateFallback: true,
-          exactShowLock: true
+          exactShowLock: true,
+          tvdbFallback: Boolean(env?.TVDB_API_KEY),
+          tvdbAttribution: true
         });
       }
 
       if (url.pathname === "/api/search" && request.method === "GET") {
         const q = (url.searchParams.get("q") || "").trim();
         if (!q) return json({ ok: false, error: "Missing q" }, 400);
-        const results = await combinedSearch(q);
+        const results = await combinedSearch(q, env);
         return json({ ok: true, results });
       }
 
@@ -50,7 +53,7 @@ export default {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ ok: false, error: "Invalid date" }, 400);
         if (!shows.length) return json({ ok: true, date, episodes: [], resolvedShows: [] });
 
-        const result = await discover(date, shows);
+        const result = await discover(date, shows, env);
         return json({ ok: true, date, ...result });
       }
 
@@ -58,7 +61,7 @@ export default {
         const body = await request.json().catch(() => null);
         const franchises = Array.isArray(body?.franchises) ? body.franchises.slice(0, 25) : [];
         const trackedIds = new Set((Array.isArray(body?.trackedIds) ? body.trackedIds : []).map(Number).filter(Boolean));
-        const candidates = await discoverFranchiseCandidates(franchises, trackedIds);
+        const candidates = await discoverFranchiseCandidates(franchises, trackedIds, env);
         return json({ ok: true, candidates });
       }
 
@@ -98,6 +101,109 @@ function summarizeShow(show, score = null) {
 }
 
 
+
+let tvdbTokenCache = { token: null, expiresAt: 0 };
+
+async function tvdbToken(env) {
+  const apiKey = String(env?.TVDB_API_KEY || "").trim();
+  if (!apiKey) return null;
+  if (tvdbTokenCache.token && Date.now() < tvdbTokenCache.expiresAt) return tvdbTokenCache.token;
+  const r = await fetch(`${TVDB}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "User-Agent": UA },
+    body: JSON.stringify({ apikey: apiKey })
+  });
+  if (!r.ok) throw new Error(`TheTVDB login failed (${r.status})`);
+  const data = await r.json();
+  const token = data?.data?.token;
+  if (!token) throw new Error("TheTVDB login returned no token");
+  // Official tokens last one month. Refresh a little early.
+  tvdbTokenCache = { token, expiresAt: Date.now() + 27 * 24 * 60 * 60 * 1000 };
+  return token;
+}
+
+async function tvdbFetch(path, env) {
+  const token = await tvdbToken(env);
+  if (!token) return null;
+  const r = await fetch(`${TVDB}${path}`, {
+    headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json", "User-Agent": UA }
+  });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`TheTVDB request failed (${r.status})`);
+  return await r.json();
+}
+
+function tvdbName(row) {
+  return row?.name || row?.name_translated || row?.translations?.eng || row?.title || null;
+}
+
+async function tvdbSearch(q, env) {
+  if (!env?.TVDB_API_KEY) return [];
+  const data = await tvdbFetch(`/search?query=${encodeURIComponent(q)}&type=series`, env).catch(() => null);
+  const rows = Array.isArray(data?.data) ? data.data : [];
+  return rows.slice(0, 10).map(row => {
+    const rawId = row.tvdb_id ?? row.tvdbId ?? row.id ?? row.objectID;
+    const id = Number(String(rawId || "").replace(/[^0-9]/g, "")) || null;
+    return {
+      id: id ? `tvdb:${id}` : null,
+      tvdbId: id,
+      source: "tvdb",
+      name: tvdbName(row) || q,
+      premiered: row.year ? `${row.year}-01-01` : (row.first_air_time || null),
+      ended: null,
+      status: row.status || null,
+      network: Array.isArray(row.companies) ? (row.companies[0]?.name || null) : null,
+      country: row.country || row.primary_language || null
+    };
+  }).filter(x => x.tvdbId);
+}
+
+async function tvdbExactTitle(title, env) {
+  const wanted = normalize(title);
+  const rows = await tvdbSearch(title, env).catch(() => []);
+  return rows.find(x => normalize(x.name) === wanted) || null;
+}
+
+async function tvdbEpisodesByDate(seriesId, date, env) {
+  if (!seriesId || !env?.TVDB_API_KEY) return [];
+  const found = [];
+  // TheTVDB paginates series episodes. Five pages is intentionally conservative for
+  // this fallback; most current shows resolve on the first page, and we only call it
+  // after TVmaze and EpisoDate find nothing for the requested day.
+  for (let page = 0; page < 5; page++) {
+    const data = await tvdbFetch(`/series/${encodeURIComponent(seriesId)}/episodes/default/eng?page=${page}`, env).catch(() => null)
+      || await tvdbFetch(`/series/${encodeURIComponent(seriesId)}/episodes/default?page=${page}`, env).catch(() => null);
+    if (!data) break;
+    const eps = Array.isArray(data?.data?.episodes) ? data.data.episodes
+      : Array.isArray(data?.data) ? data.data
+      : Array.isArray(data?.episodes) ? data.episodes : [];
+    for (const ep of eps) {
+      const aired = String(ep?.aired || ep?.airDate || ep?.firstAired || "").slice(0, 10);
+      if (aired === date) found.push(ep);
+    }
+    const next = data?.links?.next ?? data?.data?.links?.next;
+    if (next === null || next === undefined || next === "") {
+      if (eps.length < 50) break;
+    }
+    if (!eps.length) break;
+  }
+  return found;
+}
+
+function normalizeTvdbEpisode(ep, showName, trackedTitle, seriesId) {
+  return {
+    id: `tvdb:${ep.id || seriesId}:${ep.seasonNumber ?? ep.season ?? ""}:${ep.number ?? ep.episodeNumber ?? ""}:${ep.aired || ep.airDate || ""}`,
+    kind: "episode",
+    source: "tvdb",
+    trackedTitle,
+    show: showName || trackedTitle,
+    season: ep.seasonNumber ?? ep.season ?? null,
+    number: ep.number ?? ep.episodeNumber ?? null,
+    title: ep.name || null,
+    airdate: String(ep.aired || ep.airDate || ep.firstAired || "").slice(0, 10) || null
+  };
+}
+
 async function episodateFetch(path) {
   const r = await fetch(`${EPISODATE}${path}`, { headers: { "User-Agent": UA } });
   if (!r.ok) throw new Error(`EpisoDate request failed (${r.status})`);
@@ -126,15 +232,17 @@ async function episodateDetails(id) {
   return data?.tvShow || null;
 }
 
-async function combinedSearch(q) {
-  const [maze, epi] = await Promise.all([
+async function combinedSearch(q, env) {
+  const [maze, epi, tvdb] = await Promise.all([
     tvmazeSearch(q).catch(() => []),
-    episodateSearch(q).catch(() => [])
+    episodateSearch(q).catch(() => []),
+    tvdbSearch(q, env).catch(() => [])
   ]);
   const wanted = normalize(q);
   const rows = [];
   for (const item of maze) rows.push({ ...item, source: "tvmaze", tvmazeId: Number(item.id), id: `tvmaze:${item.id}` });
   for (const item of epi) rows.push(item);
+  for (const item of tvdb) rows.push(item);
 
   // Exact-name matches first, then U.S. results, then the provider's own order.
   rows.sort((a, b) => {
@@ -151,24 +259,27 @@ async function combinedSearch(q) {
   // because that second identity is useful as a fallback if one database is incomplete.
   const seen = new Set();
   return rows.filter(item => {
-    const key = item.source === "tvmaze" ? `m:${item.tvmazeId}` : `e:${item.episodateId}`;
+    const key = item.source === "tvmaze" ? `m:${item.tvmazeId}` : item.source === "episodate" ? `e:${item.episodateId}` : `t:${item.tvdbId}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   }).slice(0, 12);
 }
 
-async function resolveExactTitle(title) {
+async function resolveExactTitle(title, env) {
   const norm = normalize(title);
-  const [maze, epi] = await Promise.all([
+  const [maze, epi, tvdb] = await Promise.all([
     tvmazeSearch(title).catch(() => []),
-    episodateSearch(title).catch(() => [])
+    episodateSearch(title).catch(() => []),
+    tvdbSearch(title, env).catch(() => [])
   ]);
   const exactMaze = maze.find(x => normalize(x.name) === norm);
   const exactEpi = epi.find(x => normalize(x.name) === norm);
+  const exactTvdb = tvdb.find(x => normalize(x.name) === norm);
   return {
     tvmaze: exactMaze ? { id: Number(exactMaze.id), name: exactMaze.name } : null,
-    episodate: exactEpi ? { id: Number(exactEpi.episodateId), name: exactEpi.name } : null
+    episodate: exactEpi ? { id: Number(exactEpi.episodateId), name: exactEpi.name } : null,
+    tvdb: exactTvdb ? { id: Number(exactTvdb.tvdbId), name: exactTvdb.name } : null
   };
 }
 
@@ -203,7 +314,7 @@ async function tvmazeEpisodesByDate(showId, date) {
   return await tvmazeFetch(`/shows/${encodeURIComponent(showId)}/episodesbydate?date=${encodeURIComponent(date)}`) || [];
 }
 
-async function discover(date, shows) {
+async function discover(date, shows, env) {
   const episodes = [];
   const resolvedShows = [];
 
@@ -213,15 +324,17 @@ async function discover(date, shows) {
 
     let mazeId = Number(raw?.tvmazeId) || null;
     let epiId = Number(raw?.episodateId) || null;
+    let tvdbId = Number(raw?.tvdbId) || null;
     let canonicalName = String(raw?.canonicalName || title);
 
     // Never use a fuzzy first-result fallback for an already tracked show.
     // If identity is missing, only bind a provider when the normalized title matches exactly.
-    if (!mazeId || !epiId) {
-      const exact = await resolveExactTitle(title);
+    if (!mazeId || !epiId || (!tvdbId && env?.TVDB_API_KEY)) {
+      const exact = await resolveExactTitle(title, env);
       if (!mazeId && exact.tvmaze?.id) mazeId = exact.tvmaze.id;
       if (!epiId && exact.episodate?.id) epiId = exact.episodate.id;
-      canonicalName = exact.tvmaze?.name || exact.episodate?.name || canonicalName;
+      if (!tvdbId && exact.tvdb?.id) tvdbId = exact.tvdb.id;
+      canonicalName = exact.tvmaze?.name || exact.episodate?.name || exact.tvdb?.name || canonicalName;
     }
 
     let mazeEpisodes = [];
@@ -232,18 +345,27 @@ async function discover(date, shows) {
 
     // EpisoDate is a no-key safety net. Use it when TVmaze has no episode for this date,
     // or when the show exists only in EpisoDate.
+    let epiEpisodes = [];
     if (epiId && mazeEpisodes.length === 0) {
-      let epiEpisodes = [];
       try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; }
       for (const ep of epiEpisodes) episodes.push(normalizeEpisodateEpisode(ep, canonicalName, title, epiId));
+    }
+
+    // TheTVDB is the third-line fallback. It is only queried for episode data when
+    // both no-key providers found nothing for this tracked show/date.
+    if (tvdbId && mazeEpisodes.length === 0 && epiEpisodes.length === 0) {
+      let tvdbEpisodes = [];
+      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; }
+      for (const ep of tvdbEpisodes) episodes.push(normalizeTvdbEpisode(ep, canonicalName, title, tvdbId));
     }
 
     resolvedShows.push({
       title,
       tvmazeId: mazeId,
       episodateId: epiId,
+      tvdbId,
       canonicalName,
-      source: mazeId ? (epiId ? "tvmaze+episodate" : "tvmaze") : (epiId ? "episodate" : "unresolved")
+      source: [mazeId ? "tvmaze" : null, epiId ? "episodate" : null, tvdbId ? "tvdb" : null].filter(Boolean).join("+") || "unresolved"
     });
   }
 
@@ -264,7 +386,7 @@ function normalizeMazeEpisode(ep, resolved, trackedTitle) {
   };
 }
 
-async function discoverFranchiseCandidates(franchises, trackedIds) {
+async function discoverFranchiseCandidates(franchises, trackedIds, env) {
   const all = new Map();
 
   for (const raw of franchises) {
@@ -309,6 +431,29 @@ async function discoverFranchiseCandidates(franchises, trackedIds) {
         source: "episodate",
         franchiseTitle,
         episodateId: match.episodateId,
+        tvmazeId: null,
+        show: match.name,
+        premiered: match.premiered || null,
+        statusText: match.status || null,
+        network: match.network || null,
+        score: 3
+      });
+    }
+
+    // Third net: TheTVDB search, when configured. This is especially useful for
+    // brand-new spinoffs that have not propagated to the no-key providers yet.
+    const tvdbMatches = await tvdbSearch(franchiseTitle, env).catch(() => []);
+    for (const match of tvdbMatches) {
+      if (normalize(match.name) === normalize(franchiseTitle)) continue;
+      const key = `${franchiseTitle}|tvdb|${match.tvdbId}`;
+      if (all.has(key)) continue;
+      all.set(key, {
+        id: `tvdb-show:${match.tvdbId}:franchise:${normalize(franchiseTitle).replace(/ /g, "-")}`,
+        kind: "series-candidate",
+        source: "tvdb",
+        franchiseTitle,
+        tvdbId: match.tvdbId,
+        episodateId: null,
         tvmazeId: null,
         show: match.name,
         premiered: match.premiered || null,
