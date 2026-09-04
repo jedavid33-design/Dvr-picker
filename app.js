@@ -757,11 +757,16 @@ function dismissAllDiscoveries() {
 function approveFranchiseCandidate(id) {
   const candidate = discoveries.find(item => item.id === id && item.kind === "series-candidate");
   if (!candidate) return;
-  if (!trackedShows.some(item => Number(item.tvmazeId) === Number(candidate.tvmazeId))) {
+  if (!trackedShows.some(item =>
+    (candidate.tvmazeId && Number(item.tvmazeId) === Number(candidate.tvmazeId)) ||
+    (candidate.episodateId && Number(item.episodateId) === Number(candidate.episodateId)) ||
+    normalizeTrackedName(item.title) === normalizeTrackedName(candidate.show)
+  )) {
     trackedShows.push({
       title: candidate.show,
       canonicalName: candidate.show,
-      tvmazeId: candidate.tvmazeId,
+      tvmazeId: candidate.tvmazeId || null,
+      episodateId: candidate.episodateId || null,
       network: candidate.network || null,
       kind: "show"
     });
@@ -794,7 +799,7 @@ function renderTrackedShows() {
     const detail = document.createElement("div");
     detail.className = "tracked-detail";
     const franchise = item.kind === "franchise" ? "Franchise watch" : "Show";
-    detail.textContent = [franchise, item.network || (item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "Tracked")].filter(Boolean).join(" · ");
+    detail.textContent = [franchise, item.network, item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "", item.episodateId ? `EpisoDate #${item.episodateId}` : ""].filter(Boolean).join(" · ");
     info.append(name, detail);
 
     const controls = document.createElement("div");
@@ -857,7 +862,7 @@ async function searchTrackedShow() {
       name.textContent = result.name;
       const detail = document.createElement("div");
       detail.className = "search-result-detail";
-      detail.textContent = [result.network, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status].filter(Boolean).join(" · ");
+      detail.textContent = [result.network, result.country, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status, result.source === "episodate" ? "EpisoDate fallback" : "TVmaze"].filter(Boolean).join(" · ");
       info.append(name, detail);
       const buttons = document.createElement("div");
       buttons.className = "search-result-buttons";
@@ -885,14 +890,24 @@ async function searchTrackedShow() {
 }
 
 function addTrackedResult(result, kind) {
-  const existing = trackedShows.find(item => Number(item.tvmazeId) === Number(result.id));
+  const tvmazeId = Number(result.tvmazeId || (result.source === "tvmaze" ? String(result.id).replace(/^tvmaze:/, "") : 0)) || null;
+  const episodateId = Number(result.episodateId || (result.source === "episodate" ? String(result.id).replace(/^episodate:/, "") : 0)) || null;
+  const existing = trackedShows.find(item =>
+    (tvmazeId && Number(item.tvmazeId) === tvmazeId) ||
+    (episodateId && Number(item.episodateId) === episodateId) ||
+    normalizeTrackedName(item.title) === normalizeTrackedName(result.name)
+  );
   if (existing) {
     if (kind === "franchise") existing.kind = "franchise";
+    if (tvmazeId) existing.tvmazeId = tvmazeId;
+    if (episodateId) existing.episodateId = episodateId;
+    existing.canonicalName = result.name || existing.canonicalName || existing.title;
   } else {
     trackedShows.push({
       title: result.name,
       canonicalName: result.name,
-      tvmazeId: result.id,
+      tvmazeId,
+      episodateId,
       network: result.network || null,
       kind
     });
@@ -903,6 +918,10 @@ function addTrackedResult(result, kind) {
   renderTrackedShows();
   renderDiscoveries();
   if (kind === "franchise") checkFranchiseCandidates({ force: true });
+}
+
+function normalizeTrackedName(value) {
+  return String(value || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function mergeDiscoveries(incoming) {
@@ -947,8 +966,9 @@ async function discoverDate(date) {
   if (Array.isArray(payload.resolvedShows)) {
     for (const resolved of payload.resolvedShows) {
       const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
-      if (item && resolved.tvmazeId) {
-        item.tvmazeId = resolved.tvmazeId;
+      if (item) {
+        if (resolved.tvmazeId) item.tvmazeId = resolved.tvmazeId;
+        if (resolved.episodateId) item.episodateId = resolved.episodateId;
         item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
       }
     }
@@ -1010,7 +1030,7 @@ async function catchUpDiscoveries({ automatic = false } = {}) {
 }
 
 async function checkFranchiseCandidates({ force = false } = {}) {
-  const franchises = trackedShows.filter(item => item.kind === "franchise" && item.tvmazeId);
+  const franchises = trackedShows.filter(item => item.kind === "franchise");
   if (!franchises.length || !getWorkerUrl()) return;
   const last = localStorage.getItem(lastFranchiseCheckStorageKey);
   if (!force && last && daysBetween(last, todayString()) < 7) return;

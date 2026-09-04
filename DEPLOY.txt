@@ -1,0 +1,43 @@
+DVR WHEEL v0.2.3 - DEPLOY NOTES
+
+Frontend
+- Upload index.html, app.js, styles.css, icon.PNG, Quicksand.ttf and OFL.txt to the existing GitHub Pages repo.
+- Do not delete browser storage or reset the wheel.
+- The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order, and weights are not migrated or recalculated.
+
+Worker
+- Replace the current Cloudflare Worker code with worker.js and deploy it.
+- If you use the Cloudflare web editor, wrangler.toml is not needed for deployment.
+- GET /health is public and should report version 0.2.3.
+- This build intentionally uses TVmaze only. No API key is required.
+
+What changed in v0.2.3
+- Tracked TV is now collapsible with the same native arrow behavior as TV Connection.
+- Its expanded/collapsed state is remembered locally on the device.
+
+What changed in v0.2.1
+- Automatic missed-day catch-up when the app opens.
+- Remembers the last successfully checked airdate, not merely the day the app was opened.
+- Checks up to 30 missed days, oldest to newest.
+- A failed date stops catch-up there so it can safely retry next time.
+- Manual “Check yesterday” remains available.
+- Franchise Watch can be enabled on any tracked show.
+- Franchise Watch scans weekly for possible future/new spinoffs using TVmaze title-family and shared-principal-cast signals.
+- Possible spinoffs require explicit Track or Ignore approval. They are never added to the wheel automatically.
+- Existing dismissed/added discoveries remain remembered.
+
+Storage design
+- Existing wheel: bedtimeMovieWheel.v2 (UNCHANGED)
+- TV tracked shows/franchise flags: dvrPicker.trackedShows.v1
+- TV discoveries/review: dvrPicker.discoveries.v1
+- Worker URL: dvrPicker.workerUrl.v1
+- Last successfully checked airdate: dvrPicker.lastTvEpisodeDate.v1
+- Franchise scan date: dvrPicker.lastFranchiseCheck.v1
+- Existing v0.2.0 check state is migrated only into the new TV-check key. Wheel storage is never migrated.
+
+Wheel preservation rule
+- Approving a discovered episode appends exactly one new wheel item at weight 1.
+- It does not shuffle, reorder, reset, increase, decrease, or otherwise modify any existing wheel item or weight.
+
+
+v0.2.3: exact provider identity lock for tracked shows; EpisoDate no-key fallback for missing shows/episodes and franchise discovery. Existing wheel localStorage key and weights are unchanged.
