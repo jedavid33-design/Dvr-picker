@@ -8,6 +8,10 @@ const defaultMovies = [
 const colors = ["#b8dfe0", "#d8c6ea", "#c6d5f2", "#f0cbd8", "#d7d2ed", "#b8d9cf", "#ead6bd", "#c4d0eb", "#e0c5dc", "#b6d4e5"];
 const storageKey = "bedtimeMovieWheel.v2";
 const lastSpinStorageKey = "dvrPicker.lastSpin.v1";
+const trackedShowsStorageKey = "dvrPicker.trackedShows.v1";
+const discoveriesStorageKey = "dvrPicker.discoveries.v1";
+const workerUrlStorageKey = "dvrPicker.workerUrl.v1";
+const lastTvCheckStorageKey = "dvrPicker.lastTvCheck.v1";
 let movies = load();
 let lastState = null;
 let selectedIndex = null;
@@ -32,6 +36,23 @@ const newMovie = document.getElementById("newMovie");
 const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
 const increaseAllBtn = document.getElementById("increaseAllBtn");
+const checkTvBtn = document.getElementById("checkTvBtn");
+const discoveryList = document.getElementById("discoveryList");
+const tvDiscoveryStatus = document.getElementById("tvDiscoveryStatus");
+const discoveryActions = document.getElementById("discoveryActions");
+const addAllDiscoveriesBtn = document.getElementById("addAllDiscoveriesBtn");
+const dismissAllDiscoveriesBtn = document.getElementById("dismissAllDiscoveriesBtn");
+const trackedShowList = document.getElementById("trackedShowList");
+const trackedShowInput = document.getElementById("trackedShowInput");
+const searchTrackedShowBtn = document.getElementById("searchTrackedShowBtn");
+const trackedSearchResults = document.getElementById("trackedSearchResults");
+const workerUrlInput = document.getElementById("workerUrlInput");
+const saveWorkerBtn = document.getElementById("saveWorkerBtn");
+const workerStatus = document.getElementById("workerStatus");
+
+let trackedShows = loadJsonArray(trackedShowsStorageKey);
+let discoveries = loadJsonArray(discoveriesStorageKey);
+let tvSearchBusy = false;
 
 function setWinner(text) {
   winnerEl.textContent = text;
@@ -486,3 +507,367 @@ if (restoredSpin) {
 render();
 increaseAllBtn.onclick = increaseAllValues;
 document.fonts?.ready.then(drawWheel);
+
+
+// ---- TV discovery integration -------------------------------------------------
+// Deliberately isolated from the existing wheel localStorage key above.
+function loadJsonArray(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTrackedShows() {
+  localStorage.setItem(trackedShowsStorageKey, JSON.stringify(trackedShows));
+}
+
+function saveDiscoveries() {
+  localStorage.setItem(discoveriesStorageKey, JSON.stringify(discoveries));
+}
+
+function getWorkerUrl() {
+  return (localStorage.getItem(workerUrlStorageKey) || "").trim().replace(/\/+$/, "");
+}
+
+function setWorkerStatus(message, state = "") {
+  workerStatus.textContent = message;
+  workerStatus.className = `tiny ${state}`.trim();
+}
+
+function localDateString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function yesterdayString() {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return localDateString(date);
+}
+
+function todayString() {
+  return localDateString(new Date());
+}
+
+function formatAirdate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return value || "";
+  const [y, m, d] = value.split("-").map(Number);
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(y, m - 1, d));
+}
+
+function episodeNumberLabel(ep) {
+  if (ep.season == null && ep.number == null) return "";
+  if (ep.season != null && ep.number != null) return `S${ep.season} E${ep.number}`;
+  if (ep.season != null) return `S${ep.season}`;
+  return `E${ep.number}`;
+}
+
+function episodeWheelTitle(ep) {
+  const parts = [ep.show || ep.trackedTitle];
+  const number = episodeNumberLabel(ep);
+  if (number) parts.push(number);
+  if (ep.title) parts.push(ep.title);
+  return parts.filter(Boolean).join(" · ");
+}
+
+function pendingDiscoveries() {
+  return discoveries.filter(item => item.status !== "added" && item.status !== "dismissed");
+}
+
+function renderDiscoveries() {
+  discoveryList.innerHTML = "";
+  const pending = pendingDiscoveries();
+  discoveryActions.hidden = pending.length === 0;
+
+  if (!getWorkerUrl()) {
+    tvDiscoveryStatus.textContent = "Connect the TV search to check yesterday automatically.";
+  } else if (!trackedShows.length) {
+    tvDiscoveryStatus.textContent = "Add a tracked show below, then I’ll check yesterday automatically.";
+  } else if (!pending.length) {
+    const checked = localStorage.getItem(lastTvCheckStorageKey);
+    tvDiscoveryStatus.textContent = checked === todayString()
+      ? "Checked yesterday. Nothing waiting for review."
+      : "Ready to check yesterday.";
+  } else {
+    tvDiscoveryStatus.textContent = `${pending.length} new episode${pending.length === 1 ? "" : "s"} waiting for review.`;
+  }
+
+  pending.forEach(ep => {
+    const row = document.createElement("div");
+    row.className = "discovery-row";
+
+    const main = document.createElement("div");
+    main.className = "discovery-main";
+
+    const show = document.createElement("div");
+    show.className = "discovery-show";
+    show.textContent = ep.show || ep.trackedTitle || "Unknown show";
+
+    const meta = document.createElement("div");
+    meta.className = "discovery-meta";
+    const bits = [episodeNumberLabel(ep), ep.title, formatAirdate(ep.airdate)].filter(Boolean);
+    meta.textContent = bits.join(" · ");
+
+    main.append(show, meta);
+
+    const buttons = document.createElement("div");
+    buttons.className = "discovery-buttons";
+    const add = document.createElement("button");
+    add.textContent = "Add";
+    add.onclick = () => addDiscoveryToWheel(ep.id);
+    const dismiss = document.createElement("button");
+    dismiss.className = "quiet-btn";
+    dismiss.textContent = "Dismiss";
+    dismiss.onclick = () => dismissDiscovery(ep.id);
+    buttons.append(add, dismiss);
+
+    row.append(main, buttons);
+    discoveryList.appendChild(row);
+  });
+}
+
+function addDiscoveryToWheel(id) {
+  const ep = discoveries.find(item => item.id === id);
+  if (!ep || ep.status === "added") return;
+
+  // Preservation rule: append only. Do not shuffle, reset, reweight, or migrate.
+  lastState = JSON.stringify(movies);
+  movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false });
+  ep.status = "added";
+  ep.reviewedAt = new Date().toISOString();
+  save();
+  saveDiscoveries();
+  render();
+  renderDiscoveries();
+}
+
+function dismissDiscovery(id) {
+  const ep = discoveries.find(item => item.id === id);
+  if (!ep) return;
+  ep.status = "dismissed";
+  ep.reviewedAt = new Date().toISOString();
+  saveDiscoveries();
+  renderDiscoveries();
+}
+
+function addAllDiscoveries() {
+  const pending = pendingDiscoveries();
+  if (!pending.length) return;
+  lastState = JSON.stringify(movies);
+  for (const ep of pending) {
+    movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false });
+    ep.status = "added";
+    ep.reviewedAt = new Date().toISOString();
+  }
+  save();
+  saveDiscoveries();
+  render();
+  renderDiscoveries();
+}
+
+function dismissAllDiscoveries() {
+  for (const ep of pendingDiscoveries()) {
+    ep.status = "dismissed";
+    ep.reviewedAt = new Date().toISOString();
+  }
+  saveDiscoveries();
+  renderDiscoveries();
+}
+
+function renderTrackedShows() {
+  trackedShowList.innerHTML = "";
+  if (!trackedShows.length) {
+    const empty = document.createElement("p");
+    empty.className = "tiny";
+    empty.textContent = "No tracked shows yet.";
+    trackedShowList.appendChild(empty);
+    return;
+  }
+
+  trackedShows.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = "tracked-row";
+    const info = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "tracked-name";
+    name.textContent = item.canonicalName || item.title;
+    const detail = document.createElement("div");
+    detail.className = "tracked-detail";
+    detail.textContent = item.network || (item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "Tracked");
+    info.append(name, detail);
+    const remove = document.createElement("button");
+    remove.className = "quiet-btn";
+    remove.textContent = "Remove";
+    remove.onclick = () => {
+      trackedShows.splice(index, 1);
+      saveTrackedShows();
+      renderTrackedShows();
+      renderDiscoveries();
+    };
+    row.append(info, remove);
+    trackedShowList.appendChild(row);
+  });
+}
+
+async function workerFetch(path, options = {}) {
+  const base = getWorkerUrl();
+  if (!base) throw new Error("Add the Worker URL in TV Connection first.");
+  const response = await fetch(`${base}${path}`, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) throw new Error(payload.error || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function searchTrackedShow() {
+  const query = trackedShowInput.value.trim();
+  if (!query || tvSearchBusy) return;
+  tvSearchBusy = true;
+  searchTrackedShowBtn.disabled = true;
+  searchTrackedShowBtn.textContent = "Finding…";
+  trackedSearchResults.innerHTML = "";
+  try {
+    const payload = await workerFetch(`/api/search?q=${encodeURIComponent(query)}`);
+    if (!payload.results?.length) {
+      const empty = document.createElement("p");
+      empty.className = "tiny";
+      empty.textContent = "No matches found.";
+      trackedSearchResults.appendChild(empty);
+      return;
+    }
+    payload.results.forEach(result => {
+      const row = document.createElement("div");
+      row.className = "search-result-row";
+      const info = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "search-result-name";
+      name.textContent = result.name;
+      const detail = document.createElement("div");
+      detail.className = "search-result-detail";
+      detail.textContent = [result.network, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status].filter(Boolean).join(" · ");
+      info.append(name, detail);
+      const add = document.createElement("button");
+      add.textContent = "Track";
+      add.onclick = () => {
+        if (trackedShows.some(item => Number(item.tvmazeId) === Number(result.id))) return;
+        trackedShows.push({
+          title: result.name,
+          canonicalName: result.name,
+          tvmazeId: result.id,
+          network: result.network || null
+        });
+        saveTrackedShows();
+        trackedShowInput.value = "";
+        trackedSearchResults.innerHTML = "";
+        renderTrackedShows();
+        renderDiscoveries();
+      };
+      row.append(info, add);
+      trackedSearchResults.appendChild(row);
+    });
+  } catch (error) {
+    const problem = document.createElement("p");
+    problem.className = "tiny";
+    problem.textContent = error.message;
+    trackedSearchResults.appendChild(problem);
+  } finally {
+    tvSearchBusy = false;
+    searchTrackedShowBtn.disabled = false;
+    searchTrackedShowBtn.textContent = "Find";
+  }
+}
+
+function mergeDiscoveries(incoming) {
+  const byId = new Map(discoveries.map(item => [item.id, item]));
+  for (const ep of incoming || []) {
+    if (!ep?.id) continue;
+    const previous = byId.get(ep.id);
+    byId.set(ep.id, previous ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt } : { ...ep, status: "pending" });
+  }
+  discoveries = Array.from(byId.values()).slice(-500);
+  saveDiscoveries();
+}
+
+async function discoverYesterday({ automatic = false } = {}) {
+  if (tvSearchBusy || !getWorkerUrl() || !trackedShows.length) return;
+  tvSearchBusy = true;
+  checkTvBtn.disabled = true;
+  checkTvBtn.textContent = "Checking…";
+  tvDiscoveryStatus.textContent = `Checking ${formatAirdate(yesterdayString())}…`;
+  try {
+    const payload = await workerFetch("/api/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date: yesterdayString(), shows: trackedShows })
+    });
+
+    mergeDiscoveries(payload.episodes || []);
+
+    if (Array.isArray(payload.resolvedShows)) {
+      for (const resolved of payload.resolvedShows) {
+        const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
+        if (item && resolved.tvmazeId) {
+          item.tvmazeId = resolved.tvmazeId;
+          item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
+        }
+      }
+      saveTrackedShows();
+      renderTrackedShows();
+    }
+
+    localStorage.setItem(lastTvCheckStorageKey, todayString());
+    renderDiscoveries();
+  } catch (error) {
+    tvDiscoveryStatus.textContent = automatic ? `Automatic check skipped: ${error.message}` : error.message;
+  } finally {
+    tvSearchBusy = false;
+    checkTvBtn.disabled = false;
+    checkTvBtn.textContent = "Check yesterday";
+  }
+}
+
+async function saveAndTestWorker() {
+  const value = workerUrlInput.value.trim().replace(/\/+$/, "");
+  if (!value) {
+    localStorage.removeItem(workerUrlStorageKey);
+    setWorkerStatus("TV connection cleared.");
+    renderDiscoveries();
+    return;
+  }
+  localStorage.setItem(workerUrlStorageKey, value);
+  setWorkerStatus("Testing…");
+  try {
+    const health = await workerFetch("/health");
+    setWorkerStatus(`${health.app || "Worker"} ${health.version || ""} connected.`, "ok");
+    renderDiscoveries();
+  } catch (error) {
+    setWorkerStatus(error.message, "error");
+  }
+}
+
+function initTvDiscovery() {
+  workerUrlInput.value = getWorkerUrl();
+  renderTrackedShows();
+  renderDiscoveries();
+
+  checkTvBtn.onclick = () => discoverYesterday();
+  addAllDiscoveriesBtn.onclick = addAllDiscoveries;
+  dismissAllDiscoveriesBtn.onclick = dismissAllDiscoveries;
+  searchTrackedShowBtn.onclick = searchTrackedShow;
+  trackedShowInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") searchTrackedShow();
+  });
+  saveWorkerBtn.onclick = saveAndTestWorker;
+
+  // At most one automatic lookup per local calendar day. No wheel state changes
+  // occur until Julie explicitly approves a discovery.
+  if (getWorkerUrl() && trackedShows.length && localStorage.getItem(lastTvCheckStorageKey) !== todayString()) {
+    discoverYesterday({ automatic: true });
+  }
+}
+
+initTvDiscovery();

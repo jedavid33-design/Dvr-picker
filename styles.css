@@ -270,3 +270,71 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 @media (prefers-reduced-motion: reduce) {
   button { transition: none; }
 }
+
+/* DVR Wheel v0.2.0: TV discovery. Existing wheel styles/state remain untouched. */
+.tv-card {
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 19px;
+  margin-top: 14px;
+  background:
+    radial-gradient(ellipse at 4% 7%, rgba(185, 224, 222, .18), transparent 36%),
+    radial-gradient(ellipse at 96% 10%, rgba(229, 191, 216, .18), transparent 35%),
+    linear-gradient(145deg, rgba(255, 254, 255, .72), rgba(250, 247, 252, .5));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px) saturate(125%);
+  -webkit-backdrop-filter: blur(24px) saturate(125%);
+}
+
+.tv-card .list-header { align-items: flex-start; }
+.tv-card h2 { margin-bottom: 3px; }
+.tv-subtitle { margin: 0 0 10px; }
+.compact-btn { padding: 9px 13px; font-size: .9rem; white-space: nowrap; }
+.discovery-list, .tracked-show-list, .search-results { display: grid; gap: 8px; }
+.discovery-list:empty, .search-results:empty { display: none; }
+
+.discovery-row, .tracked-row, .search-result-row {
+  border: 1px solid var(--soft-line);
+  border-radius: 18px;
+  padding: 11px 12px;
+  background: rgba(255,255,255,.42);
+}
+
+.discovery-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.discovery-main { min-width: 0; }
+.discovery-show { font-weight: 680; line-height: 1.25; }
+.discovery-meta { color: var(--muted); font-size: .9rem; margin-top: 3px; line-height: 1.35; }
+.discovery-buttons { display: flex; gap: 6px; }
+.discovery-buttons button { padding: 8px 11px; font-size: .88rem; }
+
+.tracked-row, .search-result-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.tracked-row + .tracked-row { margin-top: 0; }
+.tracked-name, .search-result-name { font-weight: 620; }
+.tracked-detail, .search-result-detail { color: var(--muted); font-size: .82rem; margin-top: 2px; }
+.tracked-row button, .search-result-row button { padding: 8px 11px; font-size: .86rem; }
+
+.tv-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.quiet-btn { color: var(--muted); background: rgba(255,255,255,.38); box-shadow: none; }
+.connection-card details > summary { cursor: pointer; font-weight: 620; }
+.connection-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
+#workerStatus.ok { color: #4e725f; }
+#workerStatus.error { color: #955b68; }
+
+@media (max-width: 520px) {
+  .tv-card { padding: 15px 13px; border-radius: 25px; }
+  .tv-card .list-header { gap: 8px; }
+  .compact-btn { padding: 8px 10px; font-size: .82rem; }
+  .discovery-row { grid-template-columns: 1fr; }
+  .discovery-buttons { justify-content: flex-start; }
+  .connection-row { grid-template-columns: 1fr; }
+}

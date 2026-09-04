@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#e8ecef" />
   <title>What to Watch</title>
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=20">
   <link rel="apple-touch-icon" href="icon.PNG?v=1">
 <link rel="icon" type="image/png" href="icon.PNG?v=1">
 </head>
@@ -33,6 +33,21 @@
       <button id="increaseAllBtn">+1 All Values</button>
     </section>
 
+    <section class="tv-card" id="tvDiscoveryCard">
+      <div class="list-header">
+        <div>
+          <h2>New from TV</h2>
+          <p class="tiny tv-subtitle" id="tvDiscoveryStatus">Connect the TV search to check yesterday automatically.</p>
+        </div>
+        <button id="checkTvBtn" class="compact-btn">Check yesterday</button>
+      </div>
+      <div id="discoveryList" class="discovery-list"></div>
+      <div class="tv-actions" id="discoveryActions" hidden>
+        <button id="addAllDiscoveriesBtn">Add All to Wheel</button>
+        <button id="dismissAllDiscoveriesBtn" class="quiet-btn">Dismiss All</button>
+      </div>
+    </section>
+
     <section class="list-card">
       <div class="list-header">
         <h2>Shows</h2>
@@ -41,8 +56,35 @@
       <div id="movieList"></div>
     </section>
 
+    <section class="tv-card">
+      <div class="list-header">
+        <div>
+          <h2>Tracked TV</h2>
+          <p class="tiny tv-subtitle">Shows checked for new episodes. This list is separate from the wheel.</p>
+        </div>
+      </div>
+      <div id="trackedShowList" class="tracked-show-list"></div>
+      <div class="add-row">
+        <input id="trackedShowInput" placeholder="Add a tracked show" autocomplete="off" />
+        <button id="searchTrackedShowBtn">Find</button>
+      </div>
+      <div id="trackedSearchResults" class="search-results"></div>
+    </section>
+
+    <section class="tv-card connection-card">
+      <details>
+        <summary>TV Connection</summary>
+        <p class="tiny">Paste the Cloudflare Worker URL once. Your wheel itself still stays in local browser storage.</p>
+        <div class="connection-row">
+          <input id="workerUrlInput" placeholder="https://dvr-wheel-tv.your-name.workers.dev" inputmode="url" />
+          <button id="saveWorkerBtn">Save &amp; Test</button>
+        </div>
+        <p class="tiny" id="workerStatus"></p>
+      </details>
+    </section>
+
     <section class="edit-card">
-      <h2>Add a show</h2>
+      <h2>Add directly to wheel</h2>
       <div class="add-row">
         <input id="newMovie" placeholder="Show" />
         <button id="addBtn">Add</button>
@@ -59,6 +101,6 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>
