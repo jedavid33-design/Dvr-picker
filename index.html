@@ -57,19 +57,17 @@
       <div id="movieList"></div>
     </section>
 
-    <section class="tv-card">
-      <div class="list-header">
-        <div>
-          <h2>Tracked TV</h2>
-          <p class="tiny tv-subtitle">Shows checked for new episodes. Use “Watch franchise” when you also want future spinoffs surfaced for approval.</p>
+    <section class="tv-card tracked-tv-card">
+      <details id="trackedTvDetails" open>
+        <summary>Tracked TV</summary>
+        <p class="tiny tv-subtitle">Shows checked for new episodes. Use “Watch franchise” when you also want future spinoffs surfaced for approval.</p>
+        <div id="trackedShowList" class="tracked-show-list"></div>
+        <div class="add-row">
+          <input id="trackedShowInput" placeholder="Add a tracked show" autocomplete="off" />
+          <button id="searchTrackedShowBtn">Find</button>
         </div>
-      </div>
-      <div id="trackedShowList" class="tracked-show-list"></div>
-      <div class="add-row">
-        <input id="trackedShowInput" placeholder="Add a tracked show" autocomplete="off" />
-        <button id="searchTrackedShowBtn">Find</button>
-      </div>
-      <div id="trackedSearchResults" class="search-results"></div>
+        <div id="trackedSearchResults" class="search-results"></div>
+      </details>
     </section>
 
     <section class="tv-card connection-card">

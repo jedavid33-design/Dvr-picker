@@ -14,6 +14,7 @@ const workerUrlStorageKey = "dvrPicker.workerUrl.v1";
 const lastTvCheckStorageKey = "dvrPicker.lastTvCheck.v1";
 const lastTvEpisodeDateStorageKey = "dvrPicker.lastTvEpisodeDate.v1";
 const lastFranchiseCheckStorageKey = "dvrPicker.lastFranchiseCheck.v1";
+const trackedTvExpandedStorageKey = "dvrPicker.trackedTvExpanded.v1";
 let movies = load();
 let lastState = null;
 let selectedIndex = null;
@@ -52,10 +53,23 @@ const workerUrlInput = document.getElementById("workerUrlInput");
 const saveWorkerBtn = document.getElementById("saveWorkerBtn");
 const workerStatus = document.getElementById("workerStatus");
 const franchiseCandidateList = document.getElementById("franchiseCandidateList");
+const trackedTvDetails = document.getElementById("trackedTvDetails");
 
 let trackedShows = loadJsonArray(trackedShowsStorageKey);
 let discoveries = loadJsonArray(discoveriesStorageKey);
 let tvSearchBusy = false;
+
+
+function initTrackedTvDisclosure() {
+  if (!trackedTvDetails) return;
+  const saved = localStorage.getItem(trackedTvExpandedStorageKey);
+  if (saved === "false") trackedTvDetails.open = false;
+  else if (saved === "true") trackedTvDetails.open = true;
+
+  trackedTvDetails.addEventListener("toggle", () => {
+    localStorage.setItem(trackedTvExpandedStorageKey, String(trackedTvDetails.open));
+  });
+}
 
 function setWinner(text) {
   winnerEl.textContent = text;
@@ -1058,4 +1072,5 @@ function initTvDiscovery() {
   }
 }
 
+initTrackedTvDisclosure();
 initTvDiscovery();

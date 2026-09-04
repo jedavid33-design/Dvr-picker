@@ -361,3 +361,15 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
   .tracked-controls, .search-result-buttons { max-width: 48%; }
   .tracked-controls button, .search-result-buttons button { padding: 8px 10px; font-size: .82rem; }
 }
+
+
+/* v0.2.2 collapsible Tracked TV */
+.tracked-tv-card details > summary {
+  cursor: pointer;
+  font-weight: 620;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  margin-bottom: 0;
+}
+.tracked-tv-card details[open] > summary { margin-bottom: 8px; }
+.tracked-tv-card details:not([open]) > summary { margin-bottom: 0; }
