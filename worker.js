@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.5";
+const UA = "DVR-Wheel/0.2.6";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -36,6 +36,8 @@ export default {
           episodateFallback: true,
           exactShowLock: true,
           rollingRecheckDays: 3,
+          providerReconciliation: true,
+          providerIdentityValidation: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -361,18 +363,83 @@ async function combinedSearch(q, env) {
   }).slice(0, 12);
 }
 
-async function resolveExactTitle(title, env) {
-  const norm = normalize(title);
+async function tvmazeIdentity(showId) {
+  if (!showId) return null;
+  const show = await tvmazeFetch(`/shows/${encodeURIComponent(showId)}`).catch(() => null);
+  if (!show) return null;
+  return {
+    name: show.name || null,
+    network: show.network?.name || show.webChannel?.name || null,
+    country: show.network?.country?.code || show.webChannel?.country?.code || null,
+    premiered: show.premiered || null
+  };
+}
+
+function normalizedCountry(value) {
+  const v = normalize(value);
+  if (!v) return "";
+  if (["us", "usa", "united states", "united states of america"].includes(v)) return "us";
+  if (["gb", "uk", "united kingdom", "great britain"].includes(v)) return "gb";
+  if (["ca", "canada"].includes(v)) return "ca";
+  if (["au", "australia"].includes(v)) return "au";
+  return v;
+}
+
+function identityScore(candidate, hints = {}) {
+  let score = 0;
+  const hc = normalizedCountry(hints.country);
+  const cc = normalizedCountry(candidate?.country);
+  if (hc && cc) score += hc === cc ? 8 : -20;
+
+  const hn = normalize(hints.network);
+  const cn = normalize(candidate?.network);
+  if (hn && cn) score += hn === cn ? 5 : -2;
+
+  const hy = Number(String(hints.premiered || "").slice(0, 4)) || 0;
+  const cy = Number(String(candidate?.premiered || "").slice(0, 4)) || 0;
+  if (hy && cy) {
+    const gap = Math.abs(hy - cy);
+    score += gap === 0 ? 4 : gap <= 1 ? 2 : gap >= 4 ? -3 : 0;
+  }
+  return score;
+}
+
+function bestExact(rows, title, hints = {}) {
+  const wanted = normalize(title);
+  const exact = rows.filter(x => normalize(x.name) === wanted);
+  if (!exact.length) return null;
+  return exact.slice().sort((a, b) => identityScore(b, hints) - identityScore(a, hints))[0] || null;
+}
+
+async function validateEpisodateIdentity(id, title, hints = {}) {
+  if (!id) return false;
+  const details = await episodateDetails(id).catch(() => null);
+  if (!details) return false;
+  if (normalize(details.name) !== normalize(title)) return false;
+  const candidate = {
+    name: details.name,
+    network: details.network || null,
+    country: details.country || null,
+    premiered: details.start_date || null
+  };
+  // Strong country disagreement is enough to reject a stale/wrong exact-title lock.
+  const hc = normalizedCountry(hints.country);
+  const cc = normalizedCountry(candidate.country);
+  if (hc && cc && hc !== cc) return false;
+  return true;
+}
+
+async function resolveExactTitle(title, env, hints = {}) {
   const [maze, epi, tmdb, tvdb] = await Promise.all([
     tvmazeSearch(title).catch(() => []),
     episodateSearch(title).catch(() => []),
     tmdbSearch(title, env).catch(() => []),
     tvdbSearch(title, env).catch(() => [])
   ]);
-  const exactMaze = maze.find(x => normalize(x.name) === norm);
-  const exactEpi = epi.find(x => normalize(x.name) === norm);
-  const exactTmdb = tmdb.find(x => normalize(x.name) === norm);
-  const exactTvdb = tvdb.find(x => normalize(x.name) === norm);
+  const exactMaze = bestExact(maze, title, hints);
+  const exactEpi = bestExact(epi, title, hints);
+  const exactTmdb = bestExact(tmdb, title, hints);
+  const exactTvdb = bestExact(tvdb, title, hints);
   return {
     tvmaze: exactMaze ? { id: Number(exactMaze.id), name: exactMaze.name } : null,
     episodate: exactEpi ? { id: Number(exactEpi.episodateId), name: exactEpi.name } : null,
@@ -426,10 +493,27 @@ async function discover(date, shows, env) {
     let tvdbId = Number(raw?.tvdbId) || null;
     let canonicalName = String(raw?.canonicalName || title);
 
+    // Use the exact TVmaze identity, when available, as the cross-provider anchor.
+    // This prevents exact-title collisions such as international versions of Big Brother.
+    const anchor = mazeId ? await tvmazeIdentity(mazeId) : null;
+    const hints = {
+      country: anchor?.country || raw?.country || null,
+      network: anchor?.network || raw?.network || null,
+      premiered: anchor?.premiered || raw?.premiered || null
+    };
+    if (anchor?.name) canonicalName = anchor.name;
+
+    // Existing EpisoDate IDs from older builds may have been attached by title alone.
+    // Reject an identity that conflicts with the anchored country, then re-resolve it.
+    if (epiId && anchor) {
+      const valid = await validateEpisodateIdentity(epiId, canonicalName || title, hints);
+      if (!valid) epiId = null;
+    }
+
     // Never use a fuzzy first-result fallback for an already tracked show.
-    // If identity is missing, only bind a provider when the normalized title matches exactly.
+    // Missing provider identities are bound only to exact titles, ranked by country/network/year.
     if (!mazeId || !epiId || (!tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) || (!tvdbId && env?.TVDB_API_KEY)) {
-      const exact = await resolveExactTitle(title, env);
+      const exact = await resolveExactTitle(canonicalName || title, env, hints);
       if (!mazeId && exact.tvmaze?.id) mazeId = exact.tvmaze.id;
       if (!epiId && exact.episodate?.id) epiId = exact.episodate.id;
       if (!tmdbId && exact.tmdb?.id) tmdbId = exact.tmdb.id;
@@ -437,33 +521,31 @@ async function discover(date, shows, env) {
       canonicalName = exact.tvmaze?.name || exact.episodate?.name || exact.tmdb?.name || exact.tvdb?.name || canonicalName;
     }
 
-    let mazeEpisodes = [];
+    // Query every configured provider for the requested date. The older strict fallback
+    // chain stopped as soon as one provider returned anything, which let a stale EpisoDate
+    // record mask a correct TMDB episode. v0.2.6 reconciles before surfacing results.
+    let mazeEpisodes = [], epiEpisodes = [], tmdbEpisodes = [], tvdbEpisodes = [];
     if (mazeId) {
       try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch { mazeEpisodes = []; }
-      for (const ep of mazeEpisodes) episodes.push(normalizeMazeEpisode(ep, { id: mazeId, name: canonicalName }, title));
     }
-
-    // EpisoDate is a no-key safety net. Use it when TVmaze has no episode for this date,
-    // or when the show exists only in EpisoDate.
-    let epiEpisodes = [];
-    if (epiId && mazeEpisodes.length === 0) {
+    if (epiId) {
       try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; }
-      for (const ep of epiEpisodes) episodes.push(normalizeEpisodateEpisode(ep, canonicalName, title, epiId));
     }
-
-    // TMDB is the keyed third-line fallback. It gets a chance when both no-key providers miss.
-    let tmdbEpisodes = [];
-    if (tmdbId && mazeEpisodes.length === 0 && epiEpisodes.length === 0) {
+    if (tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) {
       try { tmdbEpisodes = await tmdbEpisodesByDate(tmdbId, date, env); } catch { tmdbEpisodes = []; }
-      for (const ep of tmdbEpisodes) episodes.push(normalizeTmdbEpisode(ep, canonicalName, title, tmdbId));
+    }
+    if (tvdbId && env?.TVDB_API_KEY) {
+      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; }
     }
 
-    // TheTVDB remains a fourth-line fallback when configured.
-    if (tvdbId && mazeEpisodes.length === 0 && epiEpisodes.length === 0 && tmdbEpisodes.length === 0) {
-      let tvdbEpisodes = [];
-      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; }
-      for (const ep of tvdbEpisodes) episodes.push(normalizeTvdbEpisode(ep, canonicalName, title, tvdbId));
-    }
+    const normalized = {
+      tvmaze: mazeEpisodes.map(ep => normalizeMazeEpisode(ep, { id: mazeId, name: canonicalName }, title)),
+      episodate: epiEpisodes.map(ep => normalizeEpisodateEpisode(ep, canonicalName, title, epiId)),
+      tmdb: tmdbEpisodes.map(ep => normalizeTmdbEpisode(ep, canonicalName, title, tmdbId)),
+      tvdb: tvdbEpisodes.map(ep => normalizeTvdbEpisode(ep, canonicalName, title, tvdbId))
+    };
+
+    for (const ep of reconcileProviderEpisodes(normalized)) episodes.push(ep);
 
     resolvedShows.push({
       title,
@@ -477,6 +559,36 @@ async function discover(date, shows, env) {
   }
 
   return { episodes: dedupeEpisodes(episodes), resolvedShows };
+}
+
+function episodeSignature(ep) {
+  const s = Number(ep?.season);
+  const n = Number(ep?.number);
+  if (Number.isFinite(s) && Number.isFinite(n)) return `sn:${s}:${n}`;
+  const title = normalize(ep?.title);
+  return title ? `t:${title}` : `id:${ep?.id || ""}`;
+}
+
+function reconcileProviderEpisodes(groups) {
+  // TVmaze remains the primary date authority when it has data.
+  if (groups.tvmaze.length) return groups.tvmaze;
+
+  // Keyed sources are used to cross-check the no-key EpisoDate feed. In particular,
+  // when EpisoDate assigns an old episode number to today's airdate, a matching TMDB
+  // or TheTVDB result wins instead of being hidden behind the old fallback short-circuit.
+  const keyed = groups.tmdb.length ? groups.tmdb : groups.tvdb.length ? groups.tvdb : [];
+  if (keyed.length) {
+    if (!groups.episodate.length) return keyed;
+    const keyedSigs = new Set(keyed.map(episodeSignature));
+    const epiSigs = new Set(groups.episodate.map(episodeSignature));
+    const agrees = [...keyedSigs].some(sig => epiSigs.has(sig));
+    // On agreement, return the keyed representation for stable metadata. On conflict,
+    // also prefer the keyed source because EpisoDate is the source most prone to stale
+    // date/episode-number pairings in our observed test cases.
+    return keyed;
+  }
+
+  return groups.episodate;
 }
 
 function normalizeMazeEpisode(ep, resolved, trackedTitle) {

@@ -1,39 +1,40 @@
-DVR WHEEL v0.2.5 - DEPLOY NOTES
+DVR WHEEL v0.2.6 - DEPLOY NOTES
 
 Frontend
 - Upload index.html, app.js, styles.css and icon.PNG to the existing GitHub Pages repo.
-- KEEP your existing Quicksand.ttf and OFL.txt files already in the repo. They are not included in this patch ZIP.
+- No font file is required for v0.2.6. The UI now uses the system Avenir Next/Avenir stack, with platform fallbacks.
 - Do not delete browser storage or reset the wheel.
 - The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order and weights are not migrated or recalculated.
 
 Worker
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
-- GET /health is public and should report version 0.2.5.
+- GET /health is public and should report version 0.2.6.
 
-Metadata fallback order
+Metadata source order / reconciliation
 1. TVmaze (primary)
-2. EpisoDate (no-key fallback)
-3. TMDB (keyed fallback when configured)
-4. TheTVDB (keyed fallback when configured)
+2. EpisoDate (no-key source)
+3. TMDB (keyed source when configured)
+4. TheTVDB (keyed source when configured)
+
+v0.2.6 changes
+- Episode discovery now queries every configured provider for the requested date before reconciling results, instead of stopping after the first source that returns something.
+- TVmaze remains the primary date authority when it has a result.
+- When TVmaze is empty, keyed TMDB/TheTVDB results can override a conflicting stale EpisoDate season/episode pairing. This targets the observed Big Brother wrong-episode-number case.
+- Cross-provider identity matching uses the locked TVmaze show's country/network/premiere hints to reduce same-title international collisions.
+- Existing EpisoDate locks are validated and can self-heal during later discovery passes if they conflict with the anchored show identity.
+- Rolling 3-airdate recheck and missed-day catch-up remain active.
+- Added/dismissed cross-provider duplicate suppression remains active.
+- UI typography now uses an Avenir Next/Avenir system-font stack to align more closely with OpalDay.
 
 TMDB
-- Add Cloudflare Worker secret TMDB_API_KEY for a TMDB v3 API key.
-- Alternatively, TMDB_READ_TOKEN is supported for a TMDB API Read Access Token.
-- Keep the credential only in Cloudflare Worker Variables and Secrets, never in the frontend.
-- /health reports tmdbFallback:true when either TMDB secret is present.
-- The frontend includes TMDB attribution/credits required for noncommercial API use.
+- Existing Cloudflare secret TMDB_API_KEY remains supported.
+- TMDB_READ_TOKEN is also supported as an alternative.
+- Keep credentials only in Cloudflare Worker Variables and Secrets, never in the frontend.
+- /health reports tmdbFallback:true when either TMDB credential is present.
 
 TheTVDB
 - Existing optional secret TVDB_API_KEY remains supported.
 - /health reports tvdbFallback:true only when it is configured.
-
-What changed in v0.2.5
-- Added TMDB as the active third metadata source, ahead of TheTVDB.
-- TMDB participates in show search, exact-title identity locking, episode fallback, and Franchise Watch.
-- Added a rolling 3-airdate recheck on app open and on manual episode discovery so late provider metadata can appear later.
-- Missed-day catch-up remains up to 30 days and is combined with the rolling recheck window.
-- Added cross-provider episode fingerprinting so an episode already Added or Dismissed stays suppressed even if a later recheck finds the same episode through a different provider.
-- Existing tracked shows are allowed to learn tmdbId automatically without being removed/re-added.
 
 Wheel preservation rule
 - Existing wheel localStorage remains bedtimeMovieWheel.v2.
