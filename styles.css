@@ -373,3 +373,9 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 }
 .tracked-tv-card details[open] > summary { margin-bottom: 8px; }
 .tracked-tv-card details:not([open]) > summary { margin-bottom: 0; }
+
+.credits-details { margin: 8px 0 10px; }
+.credits-details > summary { cursor: pointer; color: var(--muted); font-size: .86rem; }
+.credits-block { padding: 8px 0 2px; }
+.tmdb-logo { width: 64px; max-width: 22%; height: auto; display: block; margin: 2px 0 5px; }
+.credits-block .tiny { margin: 3px 0; }

@@ -760,6 +760,7 @@ function approveFranchiseCandidate(id) {
   if (!trackedShows.some(item =>
     (candidate.tvmazeId && Number(item.tvmazeId) === Number(candidate.tvmazeId)) ||
     (candidate.episodateId && Number(item.episodateId) === Number(candidate.episodateId)) ||
+    (candidate.tmdbId && Number(item.tmdbId) === Number(candidate.tmdbId)) ||
     (candidate.tvdbId && Number(item.tvdbId) === Number(candidate.tvdbId)) ||
     normalizeTrackedName(item.title) === normalizeTrackedName(candidate.show)
   )) {
@@ -768,6 +769,7 @@ function approveFranchiseCandidate(id) {
       canonicalName: candidate.show,
       tvmazeId: candidate.tvmazeId || null,
       episodateId: candidate.episodateId || null,
+      tmdbId: candidate.tmdbId || null,
       tvdbId: candidate.tvdbId || null,
       network: candidate.network || null,
       kind: "show"
@@ -801,7 +803,7 @@ function renderTrackedShows() {
     const detail = document.createElement("div");
     detail.className = "tracked-detail";
     const franchise = item.kind === "franchise" ? "Franchise watch" : "Show";
-    detail.textContent = [franchise, item.network, item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "", item.episodateId ? `EpisoDate #${item.episodateId}` : "", item.tvdbId ? `TVDB #${item.tvdbId}` : ""].filter(Boolean).join(" · ");
+    detail.textContent = [franchise, item.network, item.tvmazeId ? `TVmaze #${item.tvmazeId}` : "", item.episodateId ? `EpisoDate #${item.episodateId}` : "", item.tmdbId ? `TMDB #${item.tmdbId}` : "", item.tvdbId ? `TVDB #${item.tvdbId}` : ""].filter(Boolean).join(" · ");
     info.append(name, detail);
 
     const controls = document.createElement("div");
@@ -864,7 +866,7 @@ async function searchTrackedShow() {
       name.textContent = result.name;
       const detail = document.createElement("div");
       detail.className = "search-result-detail";
-      detail.textContent = [result.network, result.country, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status, result.source === "episodate" ? "EpisoDate fallback" : result.source === "tvdb" ? "TheTVDB fallback" : "TVmaze"].filter(Boolean).join(" · ");
+      detail.textContent = [result.network, result.country, result.premiered ? `started ${result.premiered.slice(0, 4)}` : "", result.status, result.source === "episodate" ? "EpisoDate fallback" : result.source === "tmdb" ? "TMDB fallback" : result.source === "tvdb" ? "TheTVDB fallback" : "TVmaze"].filter(Boolean).join(" · ");
       info.append(name, detail);
       const buttons = document.createElement("div");
       buttons.className = "search-result-buttons";
@@ -894,10 +896,12 @@ async function searchTrackedShow() {
 function addTrackedResult(result, kind) {
   const tvmazeId = Number(result.tvmazeId || (result.source === "tvmaze" ? String(result.id).replace(/^tvmaze:/, "") : 0)) || null;
   const episodateId = Number(result.episodateId || (result.source === "episodate" ? String(result.id).replace(/^episodate:/, "") : 0)) || null;
+  const tmdbId = Number(result.tmdbId || (result.source === "tmdb" ? String(result.id).replace(/^tmdb:/, "") : 0)) || null;
   const tvdbId = Number(result.tvdbId || (result.source === "tvdb" ? String(result.id).replace(/^tvdb:/, "") : 0)) || null;
   const existing = trackedShows.find(item =>
     (tvmazeId && Number(item.tvmazeId) === tvmazeId) ||
     (episodateId && Number(item.episodateId) === episodateId) ||
+    (tmdbId && Number(item.tmdbId) === tmdbId) ||
     (tvdbId && Number(item.tvdbId) === tvdbId) ||
     normalizeTrackedName(item.title) === normalizeTrackedName(result.name)
   );
@@ -905,6 +909,7 @@ function addTrackedResult(result, kind) {
     if (kind === "franchise") existing.kind = "franchise";
     if (tvmazeId) existing.tvmazeId = tvmazeId;
     if (episodateId) existing.episodateId = episodateId;
+    if (tmdbId) existing.tmdbId = tmdbId;
     if (tvdbId) existing.tvdbId = tvdbId;
     existing.canonicalName = result.name || existing.canonicalName || existing.title;
   } else {
@@ -913,6 +918,7 @@ function addTrackedResult(result, kind) {
       canonicalName: result.name,
       tvmazeId,
       episodateId,
+      tmdbId,
       tvdbId,
       network: result.network || null,
       kind
@@ -930,14 +936,33 @@ function normalizeTrackedName(value) {
   return String(value || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function discoveryFingerprint(item) {
+  if (!item) return "";
+  if (item.kind === "series-candidate") return `series|${normalizeTrackedName(item.show)}|${item.premiered || ""}`;
+  const show = normalizeTrackedName(item.show || item.trackedTitle);
+  const season = item.season ?? "";
+  const number = item.number ?? "";
+  const airdate = item.airdate || "";
+  const title = normalizeTrackedName(item.title || "");
+  // S/E + date is the strongest cross-provider identity. Title is the fallback when numbering is absent.
+  return `episode|${show}|${season}|${number}|${airdate}|${season === "" && number === "" ? title : ""}`;
+}
+
 function mergeDiscoveries(incoming) {
   const byId = new Map(discoveries.map(item => [item.id, item]));
+  const byFingerprint = new Map(discoveries.map(item => [discoveryFingerprint(item), item]).filter(([key]) => key));
   for (const ep of incoming || []) {
     if (!ep?.id) continue;
-    const previous = byId.get(ep.id);
-    byId.set(ep.id, previous ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt } : { ...ep, status: "pending" });
+    const previous = byId.get(ep.id) || byFingerprint.get(discoveryFingerprint(ep));
+    const merged = previous
+      ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt, id: previous.id || ep.id }
+      : { ...ep, status: "pending" };
+    byId.set(merged.id, merged);
+    byFingerprint.set(discoveryFingerprint(merged), merged);
   }
-  discoveries = Array.from(byId.values()).slice(-800);
+  const unique = new Map();
+  for (const item of byId.values()) unique.set(discoveryFingerprint(item) || item.id, item);
+  discoveries = Array.from(unique.values()).slice(-800);
   saveDiscoveries();
 }
 
@@ -949,17 +974,29 @@ function migrateOldCheckState() {
   if (oldEpisodeDate) localStorage.setItem(lastTvEpisodeDateStorageKey, oldEpisodeDate);
 }
 
+function rollingRecheckDates(days = 3) {
+  const dates = [];
+  const yesterday = yesterdayString();
+  for (let i = Math.max(0, days - 1); i >= 0; i--) {
+    const date = addDays(yesterday, -i);
+    if (date) dates.push(date);
+  }
+  return dates;
+}
+
 function catchUpDates() {
   const yesterday = yesterdayString();
+  const recent = rollingRecheckDates(3);
   const last = localStorage.getItem(lastTvEpisodeDateStorageKey);
-  if (!last || !parseLocalDate(last)) return [yesterday];
-  if (last >= yesterday) return [];
-  let start = addDays(last, 1);
-  const gap = daysBetween(start, yesterday);
-  if (gap > 29) start = addDays(yesterday, -29);
-  const dates = [];
-  for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) dates.push(cursor);
-  return dates;
+  const dates = new Set(recent);
+  if (!last || !parseLocalDate(last)) return Array.from(dates).sort();
+  if (last < yesterday) {
+    let start = addDays(last, 1);
+    const gap = daysBetween(start, yesterday);
+    if (gap > 29) start = addDays(yesterday, -29);
+    for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) dates.add(cursor);
+  }
+  return Array.from(dates).sort();
 }
 
 async function discoverDate(date) {
@@ -975,6 +1012,7 @@ async function discoverDate(date) {
       if (item) {
         if (resolved.tvmazeId) item.tvmazeId = resolved.tvmazeId;
         if (resolved.episodateId) item.episodateId = resolved.episodateId;
+        if (resolved.tmdbId) item.tmdbId = resolved.tmdbId;
         if (resolved.tvdbId) item.tvdbId = resolved.tvdbId;
         item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
       }
@@ -991,9 +1029,10 @@ async function discoverYesterday({ automatic = false } = {}) {
   tvSearchBusy = true;
   checkTvBtn.disabled = true;
   checkTvBtn.textContent = "Checking…";
-  tvDiscoveryStatus.textContent = `Checking ${formatAirdate(yesterdayString())}…`;
+  const dates = rollingRecheckDates(3);
+  tvDiscoveryStatus.textContent = `Checking recent TV…`;
   try {
-    await discoverDate(yesterdayString());
+    for (const date of dates) await discoverDate(date);
     renderTrackedShows();
     renderDiscoveries();
   } catch (error) {
@@ -1092,7 +1131,7 @@ function initTvDiscovery() {
   });
   saveWorkerBtn.onclick = saveAndTestWorker;
 
-  // Catch up every missed airdate, up to 30 days, when the app opens.
+  // Catch up missed airdates (up to 30 days) and always recheck the latest 3 air dates on app open.
   // No wheel state changes occur until Julie explicitly approves an episode.
   if (getWorkerUrl() && trackedShows.length) {
     catchUpDiscoveries({ automatic: true });
