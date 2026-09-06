@@ -1,14 +1,14 @@
-DVR WHEEL v0.2.6 - DEPLOY NOTES
+DVR WHEEL v0.2.7 - DEPLOY NOTES
 
 Frontend
 - Upload index.html, app.js, styles.css and icon.PNG to the existing GitHub Pages repo.
-- No font file is required for v0.2.6. The UI now uses the system Avenir Next/Avenir stack, with platform fallbacks.
+- No font file is required for v0.2.7. The UI now uses the system Avenir Next/Avenir stack, with platform fallbacks.
 - Do not delete browser storage or reset the wheel.
 - The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order and weights are not migrated or recalculated.
 
 Worker
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
-- GET /health is public and should report version 0.2.6.
+- GET /health is public and should report version 0.2.7.
 
 Metadata source order / reconciliation
 1. TVmaze (primary)
@@ -16,7 +16,7 @@ Metadata source order / reconciliation
 3. TMDB (keyed source when configured)
 4. TheTVDB (keyed source when configured)
 
-v0.2.6 changes
+v0.2.7 changes
 - Episode discovery now queries every configured provider for the requested date before reconciling results, instead of stopping after the first source that returns something.
 - TVmaze remains the primary date authority when it has a result.
 - When TVmaze is empty, keyed TMDB/TheTVDB results can override a conflicting stale EpisoDate season/episode pairing. This targets the observed Big Brother wrong-episode-number case.
@@ -40,3 +40,6 @@ Wheel preservation rule
 - Existing wheel localStorage remains bedtimeMovieWheel.v2.
 - Approving a discovered episode appends exactly one new wheel item at weight 1.
 - Discovery/rechecking never shuffles, reorders, resets, increases, decreases or otherwise modifies existing wheel items or weights.
+
+- Stabilized the top/current-title readout to a fixed reserved height so manual wheel dragging does not shift vertically as titles of different lengths rotate under the pointer.
+- Manual spin physics, wheel weights, TV discovery, and localStorage schema are unchanged.
