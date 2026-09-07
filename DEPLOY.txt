@@ -1,45 +1,41 @@
-DVR WHEEL v0.2.7 - DEPLOY NOTES
+DVR WHEEL v0.2.8 - DEPLOY NOTES
 
-Frontend
-- Upload index.html, app.js, styles.css and icon.PNG to the existing GitHub Pages repo.
-- No font file is required for v0.2.7. The UI now uses the system Avenir Next/Avenir stack, with platform fallbacks.
-- Do not delete browser storage or reset the wheel.
-- The existing wheel localStorage key remains bedtimeMovieWheel.v2. Existing items, order and weights are not migrated or recalculated.
+FRONTEND
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or recalculate existing wheel entries or weights.
+- New approved TV episodes still append at weight 1.
+- UI continues to use the system Avenir Next/Avenir font stack.
 
-Worker
+WORKER
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
-- GET /health is public and should report version 0.2.7.
+- Keep the existing TMDB_API_KEY secret. TVDB_API_KEY remains optional.
+- GET /health is public and should report version 0.2.8.
+- No D1/KV/database is required.
 
-Metadata source order / reconciliation
-1. TVmaze (primary)
-2. EpisoDate (no-key source)
-3. TMDB (keyed source when configured)
-4. TheTVDB (keyed source when configured)
+v0.2.8 changes
+1. Provider consensus
+   - Episode discovery now compares all available provider results instead of automatically accepting TVmaze whenever it returns data.
+   - Conflicting season/episode numbering is scored across TVmaze, EpisoDate, TMDB, and optional TheTVDB.
+   - This specifically addresses Big Brother date/episode-number drift.
 
-v0.2.7 changes
-- Episode discovery now queries every configured provider for the requested date before reconciling results, instead of stopping after the first source that returns something.
-- TVmaze remains the primary date authority when it has a result.
-- When TVmaze is empty, keyed TMDB/TheTVDB results can override a conflicting stale EpisoDate season/episode pairing. This targets the observed Big Brother wrong-episode-number case.
-- Cross-provider identity matching uses the locked TVmaze show's country/network/premiere hints to reduce same-title international collisions.
-- Existing EpisoDate locks are validated and can self-heal during later discovery passes if they conflict with the anchored show identity.
-- Rolling 3-airdate recheck and missed-day catch-up remain active.
-- Added/dismissed cross-provider duplicate suppression remains active.
-- UI typography now uses an Avenir Next/Avenir system-font stack to align more closely with OpalDay.
+2. Schedule safety net
+   - Each discovery date also checks the TVmaze U.S. schedule as a recovery path when an exact show's episodes-by-date endpoint returns nothing.
+   - This is intended to catch valid tracked episodes such as The Great Food Truck Race that otherwise slip through an exact-provider lookup.
 
-TMDB
-- Existing Cloudflare secret TMDB_API_KEY remains supported.
-- TMDB_READ_TOKEN is also supported as an alternative.
-- Keep credentials only in Cloudflare Worker Variables and Secrets, never in the frontend.
-- /health reports tmdbFallback:true when either TMDB credential is present.
+3. Initial backfill for newly tracked shows
+   - When a show is first tracked, the frontend performs one initial backfill search for that show only.
+   - The Worker widens the lookback only if needed: 30 days -> 1 year -> 2 years -> 5 years.
+   - It stops at the first window containing aired episodes and sends those episodes to New from TV for approval.
+   - After that one-time backfill, the normal rolling 3-day recheck/catch-up behavior takes over.
 
-TheTVDB
-- Existing optional secret TVDB_API_KEY remains supported.
-- /health reports tvdbFallback:true only when it is configured.
+4. Sequential episode resolution when spinning
+   - If a spin lands on a later episode of a tracked series, the selected result resolves to the earliest remaining episode for that same show/season up through the landed episode.
+   - The wheel therefore chooses the show randomly while preserving episode order among episodes still on the wheel.
+   - Watched still removes only the resolved selected episode.
 
-Wheel preservation rule
-- Existing wheel localStorage remains bedtimeMovieWheel.v2.
-- Approving a discovered episode appends exactly one new wheel item at weight 1.
-- Discovery/rechecking never shuffles, reorders, resets, increases, decreases or otherwise modifies existing wheel items or weights.
-
-- Stabilized the top/current-title readout to a fixed reserved height so manual wheel dragging does not shift vertically as titles of different lengths rotate under the pointer.
-- Manual spin physics, wheel weights, TV discovery, and localStorage schema are unchanged.
+TV SOURCES
+- TVmaze: primary discovery + U.S. schedule safety net
+- EpisoDate: active provider
+- TMDB: active when TMDB_API_KEY or TMDB_READ_TOKEN is configured
+- TheTVDB: optional when TVDB_API_KEY is configured

@@ -196,8 +196,49 @@ function itemIndexAtPointer(wheelRotation = rotation) {
   return movies.length - 1;
 }
 
+function trackedSeriesNameForLegacyTitle(title) {
+  const value = String(title || "").trim();
+  const matches = trackedShows
+    .map(show => String(show?.canonicalName || show?.title || "").trim())
+    .filter(Boolean)
+    .sort((a,b) => b.length - a.length);
+  for (const show of matches) {
+    const re = new RegExp(`^${show.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s+(\\d+)$`, "i");
+    const m = value.match(re);
+    if (m) return { show, season: null, number: Number(m[1]), legacy: true };
+  }
+  return null;
+}
+
+function episodeDescriptor(title) {
+  const value = String(title || "").trim();
+  let m = value.match(/^(.*?)\s*(?:·|—|-)\s*S(\d+)\s*E(\d+)\b/i);
+  if (m) return { show: m[1].trim(), season: Number(m[2]), number: Number(m[3]), legacy: false };
+  m = value.match(/^(.*?)\s*(?:·|—|-)\s*S(\d+)E(\d+)\b/i);
+  if (m) return { show: m[1].trim(), season: Number(m[2]), number: Number(m[3]), legacy: false };
+  return trackedSeriesNameForLegacyTitle(value);
+}
+
+function resolveNextUnwatchedEpisodeIndex(index) {
+  const selected = movies[index];
+  const descriptor = episodeDescriptor(selected?.title);
+  if (!descriptor || !Number.isFinite(descriptor.number)) return index;
+  const wantedShow = normalizeTrackedName(descriptor.show);
+  const candidates = [];
+  movies.forEach((movie, i) => {
+    const d = episodeDescriptor(movie.title);
+    if (!d || normalizeTrackedName(d.show) !== wantedShow || !Number.isFinite(d.number)) return;
+    if (descriptor.season != null && d.season != null && d.season !== descriptor.season) return;
+    if (d.number <= descriptor.number) candidates.push({ index: i, number: d.number });
+  });
+  if (!candidates.length) return index;
+  candidates.sort((a,b) => a.number - b.number || a.index - b.index);
+  return candidates[0].index;
+}
+
 function finishSpin(index) {
   if (index == null || !movies[index]) return;
+  index = resolveNextUnwatchedEpisodeIndex(index);
   selectedIndex = index;
   spinning = false;
   setWinner(movies[index].title);
@@ -905,6 +946,7 @@ function addTrackedResult(result, kind) {
     (tvdbId && Number(item.tvdbId) === tvdbId) ||
     normalizeTrackedName(item.title) === normalizeTrackedName(result.name)
   );
+  let trackedItem = existing || null;
   if (existing) {
     if (kind === "franchise") existing.kind = "franchise";
     if (tvmazeId) existing.tvmazeId = tvmazeId;
@@ -913,7 +955,7 @@ function addTrackedResult(result, kind) {
     if (tvdbId) existing.tvdbId = tvdbId;
     existing.canonicalName = result.name || existing.canonicalName || existing.title;
   } else {
-    trackedShows.push({
+    trackedItem = {
       title: result.name,
       canonicalName: result.name,
       tvmazeId,
@@ -922,13 +964,15 @@ function addTrackedResult(result, kind) {
       tvdbId,
       network: result.network || null,
       kind
-    });
+    };
+    trackedShows.push(trackedItem);
   }
   saveTrackedShows();
   trackedShowInput.value = "";
   trackedSearchResults.innerHTML = "";
   renderTrackedShows();
   renderDiscoveries();
+  if (trackedItem && !trackedItem.backfilledAt) initialBackfillShow(trackedItem);
   if (kind === "franchise") checkFranchiseCandidates({ force: true });
 }
 
@@ -997,6 +1041,32 @@ function catchUpDates() {
     for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) dates.add(cursor);
   }
   return Array.from(dates).sort();
+}
+
+async function initialBackfillShow(show) {
+  if (!show || show.backfilledAt || !getWorkerUrl()) return;
+  try {
+    tvDiscoveryStatus.textContent = `Looking back for ${show.title}…`;
+    const payload = await workerFetch("/api/backfill", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ show })
+    });
+    mergeDiscoveries(payload.episodes || []);
+    const resolved = payload.resolvedShow || {};
+    if (resolved.tvmazeId) show.tvmazeId = resolved.tvmazeId;
+    if (resolved.episodateId) show.episodateId = resolved.episodateId;
+    if (resolved.tmdbId) show.tmdbId = resolved.tmdbId;
+    if (resolved.tvdbId) show.tvdbId = resolved.tvdbId;
+    if (resolved.canonicalName) show.canonicalName = resolved.canonicalName;
+    show.backfilledAt = todayString();
+    show.backfillWindowDays = Number(payload.windowDays) || null;
+    saveTrackedShows();
+    renderTrackedShows();
+    renderDiscoveries();
+  } catch (error) {
+    tvDiscoveryStatus.textContent = `Initial episode search paused: ${error.message}`;
+  }
 }
 
 async function discoverDate(date) {

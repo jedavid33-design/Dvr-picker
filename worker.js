@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.7";
+const VERSION = "0.2.8";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.7";
+const UA = "DVR-Wheel/0.2.8";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -38,6 +38,8 @@ export default {
           rollingRecheckDays: 3,
           providerReconciliation: true,
           providerIdentityValidation: true,
+          providerConsensus: true,
+          initialBackfill: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -60,6 +62,14 @@ export default {
 
         const result = await discover(date, shows, env);
         return json({ ok: true, date, ...result });
+      }
+
+      if (url.pathname === "/api/backfill" && request.method === "POST") {
+        const body = await request.json().catch(() => null);
+        const show = body?.show && typeof body.show === "object" ? body.show : null;
+        if (!show?.title) return json({ ok: false, error: "Missing show" }, 400);
+        const result = await backfillShow(show, env);
+        return json({ ok: true, ...result });
       }
 
       if (url.pathname === "/api/franchise-candidates" && request.method === "POST") {
@@ -479,9 +489,24 @@ async function tvmazeEpisodesByDate(showId, date) {
   return await tvmazeFetch(`/shows/${encodeURIComponent(showId)}/episodesbydate?date=${encodeURIComponent(date)}`) || [];
 }
 
+async function tvmazeScheduleByDate(date) {
+  return await tvmazeFetch(`/schedule?country=US&date=${encodeURIComponent(date)}`) || [];
+}
+
+async function tvmazeScheduleEpisodesForShow(schedule, title, showId = null) {
+  const wanted = normalize(title);
+  return (Array.isArray(schedule) ? schedule : []).filter(ep => {
+    const sid = Number(ep?.show?.id);
+    if (showId && sid === Number(showId)) return true;
+    return normalize(ep?.show?.name) === wanted;
+  });
+}
+
 async function discover(date, shows, env) {
   const episodes = [];
   const resolvedShows = [];
+  let schedule = [];
+  try { schedule = await tvmazeScheduleByDate(date); } catch { schedule = []; }
 
   for (const raw of shows) {
     const title = String(raw?.title || "").trim();
@@ -528,6 +553,9 @@ async function discover(date, shows, env) {
     if (mazeId) {
       try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch { mazeEpisodes = []; }
     }
+    if (!mazeEpisodes.length && schedule.length) {
+      mazeEpisodes = await tvmazeScheduleEpisodesForShow(schedule, canonicalName || title, mazeId);
+    }
     if (epiId) {
       try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; }
     }
@@ -570,25 +598,56 @@ function episodeSignature(ep) {
 }
 
 function reconcileProviderEpisodes(groups) {
-  // TVmaze remains the primary date authority when it has data.
-  if (groups.tvmaze.length) return groups.tvmaze;
+  const sourceWeight = { tvdb: 4, tmdb: 3, tvmaze: 2, episodate: 1 };
+  const activeProviders = Object.entries(groups || {}).filter(([, items]) => Array.isArray(items) && items.length);
+  if (activeProviders.length === 1) return dedupeEpisodes(activeProviders[0][1]);
+  const all = [];
+  for (const [source, items] of Object.entries(groups || {})) {
+    for (const ep of items || []) all.push({ ...ep, source: ep.source || source });
+  }
+  if (!all.length) return [];
 
-  // Keyed sources are used to cross-check the no-key EpisoDate feed. In particular,
-  // when EpisoDate assigns an old episode number to today's airdate, a matching TMDB
-  // or TheTVDB result wins instead of being hidden behind the old fallback short-circuit.
-  const keyed = groups.tmdb.length ? groups.tmdb : groups.tvdb.length ? groups.tvdb : [];
-  if (keyed.length) {
-    if (!groups.episodate.length) return keyed;
-    const keyedSigs = new Set(keyed.map(episodeSignature));
-    const epiSigs = new Set(groups.episodate.map(episodeSignature));
-    const agrees = [...keyedSigs].some(sig => epiSigs.has(sig));
-    // On agreement, return the keyed representation for stable metadata. On conflict,
-    // also prefer the keyed source because EpisoDate is the source most prone to stale
-    // date/episode-number pairings in our observed test cases.
-    return keyed;
+  const buckets = new Map();
+  for (const ep of all) {
+    const sig = episodeSignature(ep);
+    const key = `${ep.airdate || ""}|${sig}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(ep);
   }
 
-  return groups.episodate;
+  const scored = [...buckets.values()].map(items => {
+    const providers = new Set(items.map(x => x.source));
+    const support = [...providers].reduce((sum, src) => sum + (sourceWeight[src] || 0), 0);
+    const best = items.slice().sort((a, b) => (sourceWeight[b.source] || 0) - (sourceWeight[a.source] || 0))[0];
+    return { items, providers, support, best };
+  });
+
+  // If providers disagree about the same broadcast date, use consensus rather than
+  // automatically trusting TVmaze. Ties break toward the more authoritative keyed source.
+  const byDate = new Map();
+  for (const row of scored) {
+    const date = row.best.airdate || "";
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(row);
+  }
+
+  const chosen = [];
+  for (const rows of byDate.values()) {
+    const maxSupport = Math.max(...rows.map(r => r.support));
+    const winners = rows.filter(r => r.support === maxSupport);
+    winners.sort((a, b) => (sourceWeight[b.best.source] || 0) - (sourceWeight[a.best.source] || 0));
+
+    // Preserve genuine multiple-episode days when several candidates have meaningful
+    // independent support; otherwise choose the best-supported numbering for that date.
+    const strong = rows.filter(r => r.providers.size >= 2 && r.support >= 3);
+    if (strong.length > 1) {
+      strong.sort((a, b) => Number(a.best.number || 0) - Number(b.best.number || 0));
+      for (const row of strong) chosen.push(row.best);
+    } else {
+      chosen.push(winners[0].best);
+    }
+  }
+  return dedupeEpisodes(chosen);
 }
 
 function normalizeMazeEpisode(ep, resolved, trackedTitle) {
@@ -602,6 +661,114 @@ function normalizeMazeEpisode(ep, resolved, trackedTitle) {
     number: ep.number ?? null,
     title: ep.name || null,
     airdate: ep.airdate || null
+  };
+}
+
+
+function dateDaysAgo(days) {
+  const d = new Date();
+  d.setHours(12,0,0,0);
+  d.setDate(d.getDate() - Number(days || 0));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+async function tvmazeEpisodeHistory(showId) {
+  if (!showId) return [];
+  return await tvmazeFetch(`/shows/${encodeURIComponent(showId)}/episodes?specials=1`) || [];
+}
+
+async function episodateEpisodeHistory(showId) {
+  if (!showId) return [];
+  const details = await episodateDetails(showId);
+  return Array.isArray(details?.episodes) ? details.episodes : [];
+}
+
+async function tmdbEpisodeHistory(seriesId, env) {
+  if (!seriesId || (!env?.TMDB_API_KEY && !env?.TMDB_READ_TOKEN)) return [];
+  const details = await tmdbFetch(`/tv/${encodeURIComponent(seriesId)}?language=en-US`, env).catch(() => null);
+  if (!details || !Array.isArray(details.seasons)) return [];
+  const seasons = details.seasons
+    .filter(x => Number(x.season_number) >= 0)
+    .sort((a,b) => Number(b.season_number)-Number(a.season_number))
+    .slice(0, 8);
+  const out = [];
+  for (const row of seasons) {
+    const season = await tmdbFetch(`/tv/${encodeURIComponent(seriesId)}/season/${encodeURIComponent(row.season_number)}?language=en-US`, env).catch(() => null);
+    if (Array.isArray(season?.episodes)) out.push(...season.episodes);
+  }
+  return out;
+}
+
+async function tvdbEpisodeHistory(seriesId, env) {
+  if (!seriesId || !env?.TVDB_API_KEY) return [];
+  const out = [];
+  for (let page = 0; page < 10; page++) {
+    const data = await tvdbFetch(`/series/${encodeURIComponent(seriesId)}/episodes/default/eng?page=${page}`, env).catch(() => null)
+      || await tvdbFetch(`/series/${encodeURIComponent(seriesId)}/episodes/default?page=${page}`, env).catch(() => null);
+    if (!data) break;
+    const eps = Array.isArray(data?.data?.episodes) ? data.data.episodes
+      : Array.isArray(data?.data) ? data.data
+      : Array.isArray(data?.episodes) ? data.episodes : [];
+    out.push(...eps);
+    if (!eps.length || eps.length < 50) break;
+  }
+  return out;
+}
+
+async function backfillShow(raw, env) {
+  const title = String(raw?.title || "").trim();
+  let mazeId = Number(raw?.tvmazeId) || null;
+  let epiId = Number(raw?.episodateId) || null;
+  let tmdbId = Number(raw?.tmdbId) || null;
+  let tvdbId = Number(raw?.tvdbId) || null;
+  let canonicalName = String(raw?.canonicalName || title);
+
+  const anchor = mazeId ? await tvmazeIdentity(mazeId).catch(() => null) : null;
+  const hints = { country: anchor?.country || raw?.country || null, network: anchor?.network || raw?.network || null, premiered: anchor?.premiered || raw?.premiered || null };
+  if (anchor?.name) canonicalName = anchor.name;
+  const exact = await resolveExactTitle(canonicalName || title, env, hints);
+  if (!mazeId && exact.tvmaze?.id) mazeId = exact.tvmaze.id;
+  if (!epiId && exact.episodate?.id) epiId = exact.episodate.id;
+  if (!tmdbId && exact.tmdb?.id) tmdbId = exact.tmdb.id;
+  if (!tvdbId && exact.tvdb?.id) tvdbId = exact.tvdb.id;
+
+  const [mazeRaw, epiRaw, tmdbRaw, tvdbRaw] = await Promise.all([
+    tvmazeEpisodeHistory(mazeId).catch(() => []),
+    episodateEpisodeHistory(epiId).catch(() => []),
+    tmdbEpisodeHistory(tmdbId, env).catch(() => []),
+    tvdbEpisodeHistory(tvdbId, env).catch(() => [])
+  ]);
+  const normalized = {
+    tvmaze: mazeRaw.map(ep => normalizeMazeEpisode(ep, { id: mazeId, name: canonicalName }, title)),
+    episodate: epiRaw.map(ep => normalizeEpisodateEpisode(ep, canonicalName, title, epiId)),
+    tmdb: tmdbRaw.map(ep => normalizeTmdbEpisode(ep, canonicalName, title, tmdbId)),
+    tvdb: tvdbRaw.map(ep => normalizeTvdbEpisode(ep, canonicalName, title, tvdbId))
+  };
+
+  const windows = [30, 365, 730, 1825];
+  let chosenWindow = windows[windows.length - 1];
+  let episodes = [];
+  for (const days of windows) {
+    const cutoff = dateDaysAgo(days);
+    const dates = new Set();
+    const upper = dateDaysAgo(0);
+    for (const items of Object.values(normalized)) for (const ep of items) if (ep.airdate && ep.airdate >= cutoff && ep.airdate <= upper) dates.add(ep.airdate);
+    const found = [];
+    for (const date of [...dates].sort()) {
+      const groups = {};
+      for (const [source, items] of Object.entries(normalized)) groups[source] = items.filter(ep => ep.airdate === date);
+      found.push(...reconcileProviderEpisodes(groups));
+    }
+    if (found.length) {
+      episodes = found.sort((a,b) => String(a.airdate).localeCompare(String(b.airdate))).slice(-100);
+      chosenWindow = days;
+      break;
+    }
+  }
+  return {
+    episodes: dedupeEpisodes(episodes),
+    windowDays: chosenWindow,
+    resolvedShow: { title, canonicalName, tvmazeId: mazeId, episodateId: epiId, tmdbId, tvdbId }
   };
 }
 
