@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.8";
+const VERSION = "0.2.9";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.8";
+const UA = "DVR-Wheel/0.2.9";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -40,6 +40,8 @@ export default {
           providerIdentityValidation: true,
           providerConsensus: true,
           initialBackfill: true,
+          strictProviderAirdate: true,
+          reviewedBroadcastGuard: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -566,12 +568,17 @@ async function discover(date, shows, env) {
       try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; }
     }
 
+    // A provider result is eligible only when the provider's own stored airdate
+    // exactly matches the requested broadcast date. Never infer/stamp the query date.
     const normalized = {
       tvmaze: mazeEpisodes.map(ep => normalizeMazeEpisode(ep, { id: mazeId, name: canonicalName }, title)),
       episodate: epiEpisodes.map(ep => normalizeEpisodateEpisode(ep, canonicalName, title, epiId)),
       tmdb: tmdbEpisodes.map(ep => normalizeTmdbEpisode(ep, canonicalName, title, tmdbId)),
       tvdb: tvdbEpisodes.map(ep => normalizeTvdbEpisode(ep, canonicalName, title, tvdbId))
     };
+    for (const source of Object.keys(normalized)) {
+      normalized[source] = normalized[source].filter(ep => ep.airdate === date);
+    }
 
     for (const ep of reconcileProviderEpisodes(normalized)) episodes.push(ep);
 

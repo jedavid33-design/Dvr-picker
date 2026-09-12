@@ -1,4 +1,4 @@
-DVR WHEEL v0.2.8 - DEPLOY NOTES
+DVR WHEEL v0.2.9 - DEPLOY NOTES
 
 FRONTEND
 - Upload the frontend files to the existing GitHub Pages repo as usual.
@@ -10,10 +10,10 @@ FRONTEND
 WORKER
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
 - Keep the existing TMDB_API_KEY secret. TVDB_API_KEY remains optional.
-- GET /health is public and should report version 0.2.8.
+- GET /health is public and should report version 0.2.9.
 - No D1/KV/database is required.
 
-v0.2.8 changes
+v0.2.9 changes
 1. Provider consensus
    - Episode discovery now compares all available provider results instead of automatically accepting TVmaze whenever it returns data.
    - Conflicting season/episode numbering is scored across TVmaze, EpisoDate, TMDB, and optional TheTVDB.
@@ -39,3 +39,9 @@ TV SOURCES
 - EpisoDate: active provider
 - TMDB: active when TMDB_API_KEY or TMDB_READ_TOKEN is configured
 - TheTVDB: optional when TVDB_API_KEY is configured
+
+
+v0.2.9 changes
+- Strict provider-airdate validation: a provider episode is eligible only when its own airdate exactly matches the date being checked.
+- Reviewed-broadcast guard: once a show/date has been Added or Dismissed, stale alternate numbering with generic/matching metadata is suppressed during rolling rechecks.
+- Existing wheel storage, order, weights, and append-at-weight-1 behavior are unchanged.

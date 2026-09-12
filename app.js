@@ -980,6 +980,39 @@ function normalizeTrackedName(value) {
   return String(value || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function reviewedBroadcastKey(item) {
+  if (!item || (item.kind && item.kind !== "episode")) return "";
+  const show = normalizeTrackedName(item.show || item.trackedTitle);
+  const airdate = /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") ? item.airdate : "";
+  if (!show || !airdate) return "";
+  return `broadcast|${show}|${airdate}`;
+}
+
+function isGenericEpisodeTitle(value) {
+  const title = normalizeTrackedName(value);
+  return !title || /^episode(?: \d+)?$/.test(title) || /^ep(?:isode)? \d+$/.test(title);
+}
+
+function sameReviewedBroadcast(previous, incoming) {
+  if (!previous || !incoming) return false;
+  if (!previous.status || !["added", "dismissed"].includes(previous.status)) return false;
+  if (reviewedBroadcastKey(previous) !== reviewedBroadcastKey(incoming)) return false;
+
+  // Exact S/E is obviously the same broadcast.
+  if (String(previous.season ?? "") === String(incoming.season ?? "") &&
+      String(previous.number ?? "") === String(incoming.number ?? "")) return true;
+
+  // Late provider corrections frequently disagree on numbering while one side still
+  // carries a generic "Episode N" title. Once that broadcast date has been reviewed,
+  // suppress the stale alternate numbering instead of re-offering it days later.
+  if (isGenericEpisodeTitle(previous.title) || isGenericEpisodeTitle(incoming.title)) return true;
+
+  // Matching descriptive titles are also the same broadcast even if numbering differs.
+  const a = normalizeTrackedName(previous.title);
+  const b = normalizeTrackedName(incoming.title);
+  return Boolean(a && b && a === b);
+}
+
 function discoveryFingerprint(item) {
   if (!item) return "";
   if (item.kind === "series-candidate") return `series|${normalizeTrackedName(item.show)}|${item.premiered || ""}`;
@@ -995,14 +1028,40 @@ function discoveryFingerprint(item) {
 function mergeDiscoveries(incoming) {
   const byId = new Map(discoveries.map(item => [item.id, item]));
   const byFingerprint = new Map(discoveries.map(item => [discoveryFingerprint(item), item]).filter(([key]) => key));
+  const reviewedByBroadcast = new Map();
+  for (const item of discoveries) {
+    const key = reviewedBroadcastKey(item);
+    if (key && ["added", "dismissed"].includes(item.status)) {
+      const list = reviewedByBroadcast.get(key) || [];
+      list.push(item);
+      reviewedByBroadcast.set(key, list);
+    }
+  }
+
   for (const ep of incoming || []) {
     if (!ep?.id) continue;
-    const previous = byId.get(ep.id) || byFingerprint.get(discoveryFingerprint(ep));
+    let previous = byId.get(ep.id) || byFingerprint.get(discoveryFingerprint(ep));
+
+    // A late/stale provider can report the same broadcast date under a different
+    // episode number. If that show/date has already been reviewed, preserve the
+    // reviewed result instead of resurrecting it as a new card.
+    if (!previous) {
+      const candidates = reviewedByBroadcast.get(reviewedBroadcastKey(ep)) || [];
+      previous = candidates.find(item => sameReviewedBroadcast(item, ep)) || null;
+    }
+
     const merged = previous
       ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt, id: previous.id || ep.id }
       : { ...ep, status: "pending" };
     byId.set(merged.id, merged);
     byFingerprint.set(discoveryFingerprint(merged), merged);
+
+    const broadcastKey = reviewedBroadcastKey(merged);
+    if (broadcastKey && ["added", "dismissed"].includes(merged.status)) {
+      const list = reviewedByBroadcast.get(broadcastKey) || [];
+      if (!list.some(item => item.id === merged.id)) list.push(merged);
+      reviewedByBroadcast.set(broadcastKey, list);
+    }
   }
   const unique = new Map();
   for (const item of byId.values()) unique.set(discoveryFingerprint(item) || item.id, item);
