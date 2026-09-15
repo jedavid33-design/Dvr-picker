@@ -655,7 +655,16 @@ function episodeWheelTitle(ep) {
 }
 
 function pendingEpisodeDiscoveries() {
-  return discoveries.filter(item => (item.kind || "episode") === "episode" && item.status !== "added" && item.status !== "dismissed");
+  const maxAirdate = yesterdayString();
+  return discoveries.filter(item => {
+    if ((item.kind || "episode") !== "episode") return false;
+    if (item.status === "added" || item.status === "dismissed") return false;
+    // "Check yesterday" is intentionally retrospective. Never surface a
+    // pending episode dated today or in the future, even if a provider/backfill
+    // returned it early. Keep reviewed records intact so dismissals still stick.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") && item.airdate > maxAirdate) return false;
+    return true;
+  });
 }
 
 function pendingFranchiseCandidates() {
@@ -1129,10 +1138,14 @@ async function initialBackfillShow(show) {
 }
 
 async function discoverDate(date) {
+  const maxAirdate = yesterdayString();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > maxAirdate) {
+    throw new Error(`TV checks cannot include ${date || "an invalid date"}; newest allowed date is ${maxAirdate}.`);
+  }
   const payload = await workerFetch("/api/discover", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ date, shows: trackedShows })
+    body: JSON.stringify({ date, maxAirdate, shows: trackedShows })
   });
   mergeDiscoveries(payload.episodes || []);
   if (Array.isArray(payload.resolvedShows)) {

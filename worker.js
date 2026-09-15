@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.9";
+const VERSION = "0.2.10";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.9";
+const UA = "DVR-Wheel/0.2.10";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -42,6 +42,7 @@ export default {
           initialBackfill: true,
           strictProviderAirdate: true,
           reviewedBroadcastGuard: true,
+          yesterdayOnlyGuard: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -58,8 +59,11 @@ export default {
       if (url.pathname === "/api/discover" && request.method === "POST") {
         const body = await request.json().catch(() => null);
         const date = String(body?.date || "");
+        const maxAirdate = String(body?.maxAirdate || "");
         const shows = Array.isArray(body?.shows) ? body.shows.slice(0, 100) : [];
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ ok: false, error: "Invalid date" }, 400);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(maxAirdate)) return json({ ok: false, error: "Missing or invalid maxAirdate" }, 400);
+        if (date > maxAirdate) return json({ ok: false, error: `Requested date ${date} is newer than allowed ${maxAirdate}` }, 400);
         if (!shows.length) return json({ ok: true, date, episodes: [], resolvedShows: [] });
 
         const result = await discover(date, shows, env);
@@ -758,7 +762,7 @@ async function backfillShow(raw, env) {
   for (const days of windows) {
     const cutoff = dateDaysAgo(days);
     const dates = new Set();
-    const upper = dateDaysAgo(0);
+    const upper = dateDaysAgo(1);
     for (const items of Object.values(normalized)) for (const ep of items) if (ep.airdate && ep.airdate >= cutoff && ep.airdate <= upper) dates.add(ep.airdate);
     const found = [];
     for (const date of [...dates].sort()) {

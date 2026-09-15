@@ -1,4 +1,4 @@
-DVR WHEEL v0.2.9 - DEPLOY NOTES
+DVR WHEEL v0.2.10 - DEPLOY NOTES
 
 FRONTEND
 - Upload the frontend files to the existing GitHub Pages repo as usual.
@@ -10,10 +10,14 @@ FRONTEND
 WORKER
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
 - Keep the existing TMDB_API_KEY secret. TVDB_API_KEY remains optional.
-- GET /health is public and should report version 0.2.9.
+- GET /health is public and should report version 0.2.10.
 - No D1/KV/database is required.
 
-v0.2.9 changes
+v0.2.10 changes
+- Yesterday-only ceiling: normal TV checks cannot request or surface episodes dated today or later.
+- Frontend pending-card guard hides any premature same-day/future episode returned by older data.
+- Initial backfill now stops at yesterday instead of including today's scheduled episodes.
+- Existing Added/Dismissed review records are preserved, so already dismissed premature cards stay reviewed when their real airdate becomes eligible.
 1. Provider consensus
    - Episode discovery now compares all available provider results instead of automatically accepting TVmaze whenever it returns data.
    - Conflicting season/episode numbering is scored across TVmaze, EpisoDate, TMDB, and optional TheTVDB.
