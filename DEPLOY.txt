@@ -1,4 +1,4 @@
-DVR WHEEL v0.2.10 - DEPLOY NOTES
+DVR WHEEL v0.2.11 - DEPLOY NOTES
 
 FRONTEND
 - Upload the frontend files to the existing GitHub Pages repo as usual.
@@ -10,8 +10,14 @@ FRONTEND
 WORKER
 - Replace the current Cloudflare Worker code with worker.js and deploy it.
 - Keep the existing TMDB_API_KEY secret. TVDB_API_KEY remains optional.
-- GET /health is public and should report version 0.2.10.
+- GET /health is public and should report version 0.2.11.
 - No D1/KV/database is required.
+
+v0.2.11 changes
+- Removed manual finger/mouse dragging of the wheel.
+- The Spin button is now the only way to initiate a spin.
+- Removed drag-only pointer handling and touch-action suppression, preventing accidental wheel movement while scrolling on touch devices.
+- No changes to wheel data, weights, TV discovery, reviewed history, or episode-order resolution.
 
 v0.2.10 changes
 - Yesterday-only ceiling: normal TV checks cannot request or surface episodes dated today or later.
