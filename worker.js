@@ -11,7 +11,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.12";
+const VERSION = "0.2.13";
 const TVMAZE = "https://api.tvmaze.com";
 const UA = "DVR-Wheel/0.2.12";
 const EPISODATE = "https://www.episodate.com/api";

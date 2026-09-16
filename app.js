@@ -585,7 +585,17 @@ function recentlyDismissedEpisodes() {
     .filter(item => {
       if ((item.kind || "episode") !== "episode" || item.status !== "dismissed") return false;
       const reviewed = Date.parse(item.reviewedAt || "");
-      return Number.isFinite(reviewed) && reviewed >= cutoff;
+      if (Number.isFinite(reviewed)) return reviewed >= cutoff;
+
+      // Older DVR Wheel builds persisted the dismissal itself but did not always
+      // attach reviewedAt. Keep those dismissals recoverable by falling back to
+      // the episode airdate when it is recent enough. This does not change the
+      // suppression state; it only makes the existing dismissed record visible
+      // in Recently Dismissed so it can be restored.
+      const aired = /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "")
+        ? Date.parse(`${item.airdate}T12:00:00`)
+        : NaN;
+      return Number.isFinite(aired) && aired >= cutoff;
     })
     .sort((a, b) => Date.parse(b.reviewedAt || 0) - Date.parse(a.reviewedAt || 0));
 }
