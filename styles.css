@@ -374,3 +374,7 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 .credits-block { padding: 8px 0 2px; }
 .tmdb-logo { width: 64px; max-width: 22%; height: auto; display: block; margin: 2px 0 5px; }
 .credits-block .tiny { margin: 3px 0; }
+
+.recently-dismissed-details { margin-top: 10px; }
+.recently-dismissed-details > summary { cursor: pointer; font-weight: 700; }
+.recently-dismissed-details[hidden] { display: none; }

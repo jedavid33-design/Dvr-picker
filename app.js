@@ -40,6 +40,9 @@ const tvDiscoveryStatus = document.getElementById("tvDiscoveryStatus");
 const discoveryActions = document.getElementById("discoveryActions");
 const addAllDiscoveriesBtn = document.getElementById("addAllDiscoveriesBtn");
 const dismissAllDiscoveriesBtn = document.getElementById("dismissAllDiscoveriesBtn");
+const recentlyDismissedDetails = document.getElementById("recentlyDismissedDetails");
+const recentlyDismissedList = document.getElementById("recentlyDismissedList");
+const recentlyDismissedCount = document.getElementById("recentlyDismissedCount");
 const trackedShowList = document.getElementById("trackedShowList");
 const trackedShowInput = document.getElementById("trackedShowInput");
 const searchTrackedShowBtn = document.getElementById("searchTrackedShowBtn");
@@ -576,9 +579,60 @@ function pendingFranchiseCandidates() {
   return discoveries.filter(item => item.kind === "series-candidate" && item.status !== "added" && item.status !== "dismissed");
 }
 
+function recentlyDismissedEpisodes() {
+  const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  return discoveries
+    .filter(item => {
+      if ((item.kind || "episode") !== "episode" || item.status !== "dismissed") return false;
+      const reviewed = Date.parse(item.reviewedAt || "");
+      return Number.isFinite(reviewed) && reviewed >= cutoff;
+    })
+    .sort((a, b) => Date.parse(b.reviewedAt || 0) - Date.parse(a.reviewedAt || 0));
+}
+
+function restoreDismissedDiscovery(id) {
+  const ep = discoveries.find(item => item.id === id);
+  if (!ep || ep.status !== "dismissed" || (ep.kind || "episode") !== "episode") return;
+  ep.status = "pending";
+  delete ep.reviewedAt;
+  saveDiscoveries();
+  renderDiscoveries();
+}
+
+function renderRecentlyDismissed() {
+  recentlyDismissedList.innerHTML = "";
+  const dismissed = recentlyDismissedEpisodes();
+  recentlyDismissedCount.textContent = dismissed.length ? `(${dismissed.length})` : "";
+  recentlyDismissedDetails.hidden = dismissed.length === 0;
+
+  dismissed.forEach(ep => {
+    const row = document.createElement("div");
+    row.className = "discovery-row";
+    const main = document.createElement("div");
+    main.className = "discovery-main";
+    const show = document.createElement("div");
+    show.className = "discovery-show";
+    show.textContent = ep.show || ep.trackedTitle || "Unknown show";
+    const meta = document.createElement("div");
+    meta.className = "discovery-meta";
+    meta.textContent = [episodeNumberLabel(ep), ep.title, formatAirdate(ep.airdate)].filter(Boolean).join(" · ");
+    main.append(show, meta);
+    const buttons = document.createElement("div");
+    buttons.className = "discovery-buttons";
+    const restore = document.createElement("button");
+    restore.className = "quiet-btn";
+    restore.textContent = "Restore";
+    restore.onclick = () => restoreDismissedDiscovery(ep.id);
+    buttons.append(restore);
+    row.append(main, buttons);
+    recentlyDismissedList.appendChild(row);
+  });
+}
+
 function renderDiscoveries() {
   discoveryList.innerHTML = "";
   franchiseCandidateList.innerHTML = "";
+  renderRecentlyDismissed();
   const pending = pendingEpisodeDiscoveries();
   const franchisePending = pendingFranchiseCandidates();
   discoveryActions.hidden = pending.length === 0;
@@ -748,7 +802,13 @@ function renderTrackedShows() {
     return;
   }
 
-  trackedShows.forEach((item, index) => {
+  const sortedTrackedShows = trackedShows
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (a.item.canonicalName || a.item.title || "").localeCompare(
+      b.item.canonicalName || b.item.title || "", undefined, { sensitivity: "base" }
+    ));
+
+  sortedTrackedShows.forEach(({ item, index }) => {
     const row = document.createElement("div");
     row.className = "tracked-row";
     const info = document.createElement("div");

@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.11";
+const VERSION = "0.2.12";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.11";
+const UA = "DVR-Wheel/0.2.12";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
