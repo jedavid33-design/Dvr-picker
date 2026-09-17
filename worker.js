@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.14";
+const VERSION = "0.2.15";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.12";
+const UA = "DVR-Wheel/0.2.15";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -44,6 +44,7 @@ export default {
           reviewedBroadcastGuard: true,
           yesterdayOnlyGuard: true,
           tmdbSeriesPointerRecovery: true,
+          discoveryDiagnostics: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -77,6 +78,16 @@ export default {
         if (!show?.title) return json({ ok: false, error: "Missing show" }, 400);
         const result = await backfillShow(show, env);
         return json({ ok: true, ...result });
+      }
+
+      if (url.pathname === "/api/debug-discover" && request.method === "POST") {
+        const body = await request.json().catch(() => null);
+        const date = String(body?.date || "");
+        const show = body?.show && typeof body.show === "object" ? body.show : null;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ ok: false, error: "Invalid date" }, 400);
+        if (!show?.title) return json({ ok: false, error: "Missing show" }, 400);
+        const result = await debugDiscovery(date, show, env);
+        return json({ ok: true, date, ...result });
       }
 
       if (url.pathname === "/api/franchise-candidates" && request.method === "POST") {
@@ -525,6 +536,93 @@ async function tvmazeScheduleEpisodesForShow(schedule, title, showId = null) {
     if (showId && sid === Number(showId)) return true;
     return normalize(ep?.show?.name) === wanted;
   });
+}
+
+
+async function debugDiscovery(date, raw, env) {
+  const title = String(raw?.title || "").trim();
+  let mazeId = Number(raw?.tvmazeId) || null;
+  let epiId = Number(raw?.episodateId) || null;
+  let tmdbId = Number(raw?.tmdbId) || null;
+  let tvdbId = Number(raw?.tvdbId) || null;
+  let canonicalName = String(raw?.canonicalName || title);
+
+  const anchor = mazeId ? await tvmazeIdentity(mazeId) : null;
+  const hints = {
+    country: anchor?.country || raw?.country || null,
+    network: anchor?.network || raw?.network || null,
+    premiered: anchor?.premiered || raw?.premiered || null
+  };
+  if (anchor?.name) canonicalName = anchor.name;
+
+  if (!mazeId || !epiId || (!tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) || (!tvdbId && env?.TVDB_API_KEY)) {
+    const exact = await resolveExactTitle(canonicalName || title, env, hints);
+    if (!mazeId && exact.tvmaze?.id) mazeId = exact.tvmaze.id;
+    if (!epiId && exact.episodate?.id) epiId = exact.episodate.id;
+    if (!tmdbId && exact.tmdb?.id) tmdbId = exact.tmdb.id;
+    if (!tvdbId && exact.tvdb?.id) tvdbId = exact.tvdb.id;
+    canonicalName = exact.tvmaze?.name || exact.episodate?.name || exact.tmdb?.name || exact.tvdb?.name || canonicalName;
+  }
+
+  let schedule = [];
+  try { schedule = await tvmazeScheduleByDate(date); } catch {}
+
+  let mazeEpisodes = [], epiEpisodes = [], tmdbEpisodes = [], tvdbEpisodes = [];
+  if (mazeId) {
+    try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch {}
+  }
+  let mazeScheduleUsed = false;
+  if (!mazeEpisodes.length && schedule.length) {
+    mazeEpisodes = await tvmazeScheduleEpisodesForShow(schedule, canonicalName || title, mazeId);
+    mazeScheduleUsed = mazeEpisodes.length > 0;
+  }
+  if (epiId) {
+    try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch {}
+  }
+  if (tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) {
+    try { tmdbEpisodes = await tmdbEpisodesByDate(tmdbId, date, env); } catch {}
+  }
+  if (tvdbId && env?.TVDB_API_KEY) {
+    try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch {}
+  }
+
+  const normalized = {
+    tvmaze: mazeEpisodes.map(ep => normalizeMazeEpisode(ep, { id: mazeId, name: canonicalName }, title)),
+    episodate: epiEpisodes.map(ep => normalizeEpisodateEpisode(ep, canonicalName, title, epiId)),
+    tmdb: tmdbEpisodes.map(ep => normalizeTmdbEpisode(ep, canonicalName, title, tmdbId)),
+    tvdb: tvdbEpisodes.map(ep => normalizeTvdbEpisode(ep, canonicalName, title, tvdbId))
+  };
+
+  const eligible = {};
+  for (const [source, items] of Object.entries(normalized)) {
+    eligible[source] = items.filter(ep => ep.airdate === date);
+  }
+
+  const finalEpisodes = reconcileProviderEpisodes(eligible);
+  const compact = items => items.map(ep => ({
+    season: ep.season ?? null,
+    number: ep.number ?? null,
+    title: ep.title || null,
+    airdate: ep.airdate || null
+  }));
+
+  return {
+    show: {
+      title,
+      canonicalName,
+      tvmazeId: mazeId,
+      episodateId: epiId,
+      tmdbId,
+      tvdbId
+    },
+    providers: {
+      tvmaze: { configured: true, scheduleFallbackUsed: mazeScheduleUsed, rawCount: mazeEpisodes.length, eligible: compact(eligible.tvmaze) },
+      episodate: { configured: true, rawCount: epiEpisodes.length, eligible: compact(eligible.episodate) },
+      tmdb: { configured: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN), rawCount: tmdbEpisodes.length, eligible: compact(eligible.tmdb) },
+      tvdb: { configured: Boolean(env?.TVDB_API_KEY), rawCount: tvdbEpisodes.length, eligible: compact(eligible.tvdb) }
+    },
+    reconciled: compact(finalEpisodes)
+  };
 }
 
 async function discover(date, shows, env) {

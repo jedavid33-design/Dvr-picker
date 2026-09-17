@@ -92,6 +92,16 @@
           <input id="workerUrlInput" placeholder="https://dvr-wheel-tv.your-name.workers.dev" inputmode="url" />
           <button id="saveWorkerBtn">Save &amp; Test</button>
         </div>
+        <details class="tv-debug-details">
+          <summary>TV Debug</summary>
+          <p class="tiny">Check exactly what each metadata source returns for one tracked show and date. No API keys are displayed.</p>
+          <div class="debug-grid">
+            <select id="debugShowSelect"></select>
+            <input id="debugDateInput" type="date" />
+            <button id="runTvDebugBtn" class="quiet-btn">Run Debug</button>
+          </div>
+          <pre id="tvDebugOutput" class="tv-debug-output">Choose a tracked show and date.</pre>
+        </details>
         <p class="tiny" id="workerStatus"></p>
       </details>
     </section>

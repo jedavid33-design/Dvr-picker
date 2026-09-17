@@ -49,6 +49,10 @@ const searchTrackedShowBtn = document.getElementById("searchTrackedShowBtn");
 const trackedSearchResults = document.getElementById("trackedSearchResults");
 const workerUrlInput = document.getElementById("workerUrlInput");
 const saveWorkerBtn = document.getElementById("saveWorkerBtn");
+const debugShowSelect = document.getElementById("debugShowSelect");
+const debugDateInput = document.getElementById("debugDateInput");
+const runTvDebugBtn = document.getElementById("runTvDebugBtn");
+const tvDebugOutput = document.getElementById("tvDebugOutput");
 const workerStatus = document.getElementById("workerStatus");
 const franchiseCandidateList = document.getElementById("franchiseCandidateList");
 const trackedTvDetails = document.getElementById("trackedTvDetails");
@@ -916,6 +920,7 @@ async function searchTrackedShow() {
     searchTrackedShowBtn.disabled = false;
     searchTrackedShowBtn.textContent = "Find";
   }
+  refreshDebugShowOptions();
 }
 
 function addTrackedResult(result, kind) {
@@ -1109,6 +1114,89 @@ async function initialBackfillShow(show) {
     renderDiscoveries();
   } catch (error) {
     tvDiscoveryStatus.textContent = `Initial episode search paused: ${error.message}`;
+  }
+}
+
+
+function refreshDebugShowOptions() {
+  if (!debugShowSelect) return;
+  const selected = debugShowSelect.value;
+  debugShowSelect.innerHTML = "";
+  [...trackedShows]
+    .sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), undefined, { sensitivity: "base" }))
+    .forEach((show, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.dataset.title = show.title || "";
+      option.textContent = show.title || show.canonicalName || "Untitled";
+      debugShowSelect.appendChild(option);
+    });
+  if (selected && [...debugShowSelect.options].some(o => o.value === selected)) debugShowSelect.value = selected;
+}
+
+function debugSuppressionReason(ep) {
+  if (!ep) return "not returned by provider reconciliation";
+  const exact = discoveries.find(item => discoveryFingerprint(item) === discoveryFingerprint(ep));
+  if (exact) return `existing discovery: ${exact.status || "pending"}`;
+  const reviewed = discoveries.filter(item => ["added", "dismissed"].includes(item.status));
+  const sameBroadcast = reviewed.find(item => sameReviewedBroadcast(item, ep));
+  if (sameBroadcast) {
+    return `suppressed by reviewed broadcast guard: ${sameBroadcast.status} ${sameBroadcast.airdate || ""} ${episodeNumberLabel(sameBroadcast)}`.trim();
+  }
+  if (ep.airdate > yesterdayString()) return `blocked by yesterday-only guard (${ep.airdate} > ${yesterdayString()})`;
+  return "would be eligible for New from TV";
+}
+
+async function runTvDebug() {
+  if (!getWorkerUrl()) {
+    tvDebugOutput.textContent = "Connect the Worker first.";
+    return;
+  }
+  const title = debugShowSelect?.selectedOptions?.[0]?.dataset?.title;
+  const show = trackedShows.find(item => item.title === title);
+  const date = debugDateInput?.value;
+  if (!show || !date) {
+    tvDebugOutput.textContent = "Choose a tracked show and date.";
+    return;
+  }
+  runTvDebugBtn.disabled = true;
+  tvDebugOutput.textContent = "Checking providers…";
+  try {
+    const payload = await workerFetch("/api/debug-discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date, show })
+    });
+    const lines = [`${show.title} · ${date}`];
+    for (const source of ["tvmaze", "episodate", "tmdb", "tvdb"]) {
+      const info = payload.providers?.[source] || {};
+      if (!info.configured) {
+        lines.push(`${source}: not configured`);
+        continue;
+      }
+      if (!info.eligible?.length) {
+        lines.push(`${source}: no matching episode${info.rawCount ? ` (${info.rawCount} raw result${info.rawCount === 1 ? "" : "s"} rejected by airdate)` : ""}`);
+        continue;
+      }
+      for (const ep of info.eligible) {
+        lines.push(`${source}: ${episodeNumberLabel(ep) || "no S/E"}${ep.title ? ` · ${ep.title}` : ""} · ${ep.airdate || "no date"}`);
+      }
+    }
+    if (!payload.reconciled?.length) {
+      lines.push("Consensus: no episode");
+      lines.push("Final: nothing to surface");
+    } else {
+      for (const ep of payload.reconciled) {
+        const normalized = { ...ep, kind: "episode", show: show.canonicalName || show.title, trackedTitle: show.title };
+        lines.push(`Consensus: ${episodeNumberLabel(normalized) || "no S/E"}${normalized.title ? ` · ${normalized.title}` : ""} · ${normalized.airdate || "no date"}`);
+        lines.push(`Final: ${debugSuppressionReason(normalized)}`);
+      }
+    }
+    tvDebugOutput.textContent = lines.join("\\n");
+  } catch (error) {
+    tvDebugOutput.textContent = `Debug failed: ${error.message}`;
+  } finally {
+    runTvDebugBtn.disabled = false;
   }
 }
 

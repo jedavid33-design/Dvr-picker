@@ -378,3 +378,9 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 .recently-dismissed-details { margin-top: 10px; }
 .recently-dismissed-details > summary { cursor: pointer; font-weight: 700; }
 .recently-dismissed-details[hidden] { display: none; }
+
+.tv-debug-details { margin-top: 12px; }
+.debug-grid { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; margin: 8px 0; }
+.debug-grid select, .debug-grid input { min-width: 0; }
+.tv-debug-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; padding: 10px; border-radius: 10px; background: rgba(0,0,0,.05); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 620px) { .debug-grid { grid-template-columns: 1fr; } }
