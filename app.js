@@ -1123,7 +1123,7 @@ function refreshDebugShowOptions() {
   const selectedTitle = debugShowSelect.selectedOptions?.[0]?.dataset?.title || "";
   let shows = Array.isArray(trackedShows) ? trackedShows : [];
   try {
-    const stored = JSON.parse(localStorage.getItem(TRACKED_KEY) || "[]");
+    const stored = JSON.parse(localStorage.getItem(trackedShowsStorageKey) || "[]");
     if (Array.isArray(stored) && stored.length) shows = stored;
   } catch {}
   debugShowSelect.innerHTML = "";
@@ -1343,6 +1343,9 @@ function initTvDiscovery() {
     if (event.key === "Enter") searchTrackedShow();
   });
   saveWorkerBtn.onclick = saveAndTestWorker;
+  if (debugDateInput && !debugDateInput.value) debugDateInput.value = yesterdayString();
+  if (runTvDebugBtn) runTvDebugBtn.onclick = runTvDebug;
+  refreshDebugShowOptions();
 
   // Catch up missed airdates (up to 30 days) and always recheck the latest 3 air dates on app open.
   // No wheel state changes occur until Julie explicitly approves an episode.
