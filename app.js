@@ -1066,6 +1066,18 @@ function mergeDiscoveries(incoming) {
 
   for (const ep of incoming || []) {
     if (!ep?.id) continue;
+    const showKey = normalizeTrackedName(ep.show || ep.trackedTitle);
+    const stalePending = [...byId.values()].find(item =>
+      !["added", "dismissed"].includes(item.status) &&
+      normalizeTrackedName(item.show || item.trackedTitle) === showKey &&
+      String(item.season ?? "") === String(ep.season ?? "") &&
+      String(item.number ?? "") === String(ep.number ?? "") &&
+      item.airdate && ep.airdate && item.airdate !== ep.airdate
+    );
+    if (stalePending) {
+      byId.delete(stalePending.id);
+      byFingerprint.delete(discoveryFingerprint(stalePending));
+    }
     let previous = byId.get(ep.id) || byFingerprint.get(discoveryFingerprint(ep));
 
     // A late/stale provider can report the same broadcast date under a different
@@ -1115,15 +1127,17 @@ function rollingRecheckDates(days = 3) {
 
 function catchUpDates() {
   const yesterday = yesterdayString();
-  const recent = rollingRecheckDates(3);
+  const recent = new Set(rollingRecheckDates(3));
   const last = localStorage.getItem(lastTvEpisodeDateStorageKey);
-  const dates = new Set(recent);
-  if (!last || !parseLocalDate(last)) return Array.from(dates).sort();
+  const dates = new Set();
+  if (!last || !parseLocalDate(last)) return [];
   if (last < yesterday) {
     let start = addDays(last, 1);
     const gap = daysBetween(start, yesterday);
     if (gap > 29) start = addDays(yesterday, -29);
-    for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) dates.add(cursor);
+    for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) {
+      if (!recent.has(cursor)) dates.add(cursor);
+    }
   }
   return Array.from(dates).sort();
 }
@@ -1350,7 +1364,7 @@ document.addEventListener("click", (event) => {
   runTvDebug();
 });
 
-async function discoverDate(date) {
+async function discoverDate(date, { batchSize = 5 } = {}) {
   const maxAirdate = yesterdayString();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > maxAirdate) {
     throw new Error(`TV checks cannot include ${date || "an invalid date"}; newest allowed date is ${maxAirdate}.`);
@@ -1360,7 +1374,7 @@ async function discoverDate(date) {
   // Worker invocation deliberately small so later shows cannot disappear when one
   // request exhausts its provider/subrequest budget. Five shows per request leaves
   // ample room for identity resolution + TVmaze/EpisoDate/TMDB lookups.
-  const DISCOVERY_BATCH_SIZE = 5;
+  const DISCOVERY_BATCH_SIZE = Math.max(1, Number(batchSize) || 5);
   const allEpisodes = [];
   const allResolvedShows = [];
 
@@ -1371,7 +1385,9 @@ async function discoverDate(date) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ date, maxAirdate, shows })
     });
-    if (Array.isArray(payload.episodes)) allEpisodes.push(...payload.episodes);
+    if (Array.isArray(payload.episodes)) {
+      allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
+    }
     if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
   }
 
@@ -1444,7 +1460,7 @@ async function catchUpDiscoveries({ automatic = false } = {}) {
       tvDiscoveryStatus.textContent = dates.length === 1
         ? `Checking ${formatAirdate(date)}…`
         : `Catching up ${i + 1} of ${dates.length} · ${formatAirdate(date)}…`;
-      await discoverDate(date);
+      await discoverDate(date, { batchSize: 12 });
     }
     renderTrackedShows();
     renderDiscoveries();
