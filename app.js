@@ -1161,7 +1161,13 @@ async function runTvDebug() {
     return;
   }
   const title = debugShowSelect?.selectedOptions?.[0]?.dataset?.title;
-  const show = trackedShows.find(item => item.title === title);
+  let show = trackedShows.find(item => (item.title || item.canonicalName) === title);
+  if (!show) {
+    try {
+      const storedShows = JSON.parse(localStorage.getItem(trackedShowsStorageKey) || "[]");
+      show = storedShows.find(item => (item.title || item.canonicalName) === title);
+    } catch {}
+  }
   const date = debugDateInput?.value;
   if (!show || !date) {
     tvDebugOutput.textContent = "Choose a tracked show and date.";
@@ -1207,6 +1213,15 @@ async function runTvDebug() {
     runTvDebugBtn.disabled = false;
   }
 }
+
+
+// v0.2.18: delegated diagnostic handler avoids init-order/cache-era listener failures.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest?.("#runTvDebugBtn");
+  if (!button) return;
+  event.preventDefault();
+  runTvDebug();
+});
 
 async function discoverDate(date) {
   const maxAirdate = yesterdayString();
@@ -1344,7 +1359,6 @@ function initTvDiscovery() {
   });
   saveWorkerBtn.onclick = saveAndTestWorker;
   if (debugDateInput && !debugDateInput.value) debugDateInput.value = yesterdayString();
-  if (runTvDebugBtn) runTvDebugBtn.onclick = runTvDebug;
   refreshDebugShowOptions();
 
   // Catch up missed airdates (up to 30 days) and always recheck the latest 3 air dates on app open.

@@ -384,3 +384,11 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 .debug-grid select, .debug-grid input { min-width: 0; }
 .tv-debug-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; padding: 10px; border-radius: 10px; background: rgba(0,0,0,.05); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 @media (max-width: 620px) { .debug-grid { grid-template-columns: 1fr; } }
+
+.build-version {
+  margin: 18px auto 8px;
+  text-align: center;
+  font-size: 11px;
+  opacity: .45;
+  user-select: none;
+}
