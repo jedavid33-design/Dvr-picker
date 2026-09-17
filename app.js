@@ -1374,3 +1374,13 @@ initTvDiscovery();
 // v0.2.16: refresh diagnostics after localStorage-backed tracked state has initialized.
 queueMicrotask(() => refreshDebugShowOptions());
 window.addEventListener("pageshow", () => refreshDebugShowOptions());
+
+// v0.2.19: aggressively check for a newly deployed service worker/app shell.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) await registration.update();
+    } catch {}
+  });
+}
