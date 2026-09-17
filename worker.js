@@ -11,7 +11,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.13";
+const VERSION = "0.2.14";
 const TVMAZE = "https://api.tvmaze.com";
 const UA = "DVR-Wheel/0.2.12";
 const EPISODATE = "https://www.episodate.com/api";
@@ -43,6 +43,7 @@ export default {
           strictProviderAirdate: true,
           reviewedBroadcastGuard: true,
           yesterdayOnlyGuard: true,
+          tmdbSeriesPointerRecovery: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
@@ -191,12 +192,30 @@ async function tmdbEpisodesByDate(seriesId, date, env) {
   }
 
   const found = [];
+
+  // TMDB's series-level last/next episode pointers are sometimes updated before
+  // the season episode list, especially for daily/syndicated shows. Treat those
+  // pointers as first-class provider metadata when their own air_date matches the
+  // requested date. This recovers episodes such as Wheel of Fortune without ever
+  // inventing/stamping the queried date onto an episode.
+  for (const ep of [details?.last_episode_to_air, details?.next_episode_to_air]) {
+    if (ep && String(ep.air_date || "").slice(0, 10) === date) found.push(ep);
+  }
+
   for (const seasonNumber of [...seasonNumbers].slice(0, 4)) {
     const season = await tmdbFetch(`/tv/${encodeURIComponent(seriesId)}/season/${encodeURIComponent(seasonNumber)}?language=en-US`, env).catch(() => null);
     const eps = Array.isArray(season?.episodes) ? season.episodes : [];
     for (const ep of eps) if (String(ep?.air_date || "").slice(0, 10) === date) found.push(ep);
   }
-  return found;
+
+  // The same TMDB episode may now be present through both the series pointer and
+  // season list. Collapse it before provider reconciliation.
+  const unique = new Map();
+  for (const ep of found) {
+    const key = `${ep.id || ""}|${ep.season_number ?? ""}|${ep.episode_number ?? ""}|${String(ep.air_date || "").slice(0,10)}`;
+    unique.set(key, ep);
+  }
+  return [...unique.values()];
 }
 
 function normalizeTmdbEpisode(ep, showName, trackedTitle, seriesId) {
