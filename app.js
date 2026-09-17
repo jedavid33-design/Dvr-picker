@@ -1275,6 +1275,9 @@ async function discoverDate(date) {
     body: JSON.stringify({ date, maxAirdate, shows: trackedShows })
   });
   mergeDiscoveries(payload.episodes || []);
+  // Surface each successful date immediately. A later provider/date failure must not
+  // hide an episode that was already discovered and saved.
+  renderDiscoveries();
   if (Array.isArray(payload.resolvedShows)) {
     for (const resolved of payload.resolvedShows) {
       const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
@@ -1405,7 +1408,13 @@ function initTvDiscovery() {
   // Catch up missed airdates (up to 30 days) and always recheck the latest 3 air dates on app open.
   // No wheel state changes occur until Julie explicitly approves an episode.
   if (getWorkerUrl() && trackedShows.length) {
-    catchUpDiscoveries({ automatic: true });
+    (async () => {
+      await catchUpDiscoveries({ automatic: true });
+      // Catch-up and rolling recheck serve different jobs. Always recheck the latest
+      // three completed air dates after catch-up so yesterday cannot be skipped merely
+      // because the catch-up cursor says the app is current.
+      await discoverYesterday({ automatic: true });
+    })();
   }
 }
 
