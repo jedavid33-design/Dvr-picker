@@ -1173,6 +1173,56 @@ function debugSuppressionReason(ep) {
   return "would be eligible for New from TV";
 }
 
+
+function summarizeDiscovery(item) {
+  if (!item) return null;
+  return {
+    id: item.id || null,
+    fp: discoveryFingerprint(item),
+    show: item.show || item.trackedTitle || null,
+    season: item.season ?? null,
+    number: item.number ?? null,
+    airdate: item.airdate || null,
+    status: item.status || "pending",
+    title: item.title || null
+  };
+}
+
+function traceIncomingAgainstState(ep) {
+  const fp = discoveryFingerprint(ep);
+  const sameId = discoveries.find(item => item.id === ep.id);
+  const sameFp = discoveries.find(item => discoveryFingerprint(item) === fp);
+  const sameBroadcast = discoveries.filter(item =>
+    ["added", "dismissed"].includes(item.status) && sameReviewedBroadcast(item, ep)
+  );
+  return {
+    incoming: summarizeDiscovery(ep),
+    sameId: summarizeDiscovery(sameId),
+    sameFingerprint: summarizeDiscovery(sameFp),
+    reviewedBroadcastMatches: sameBroadcast.map(summarizeDiscovery),
+    pendingBefore: pendingEpisodeDiscoveries().some(item => discoveryFingerprint(item) === fp)
+  };
+}
+
+function simulateMergeForTrace(incoming) {
+  const snapshot = JSON.stringify(discoveries);
+  const persistedSnapshot = localStorage.getItem(discoveriesStorageKey);
+  const before = incoming.map(traceIncomingAgainstState);
+  mergeDiscoveries(incoming);
+  const after = incoming.map(ep => {
+    const fp = discoveryFingerprint(ep);
+    const exact = discoveries.find(item => discoveryFingerprint(item) === fp);
+    return {
+      resulting: summarizeDiscovery(exact),
+      pendingAfter: pendingEpisodeDiscoveries().some(item => discoveryFingerprint(item) === fp)
+    };
+  });
+  discoveries = JSON.parse(snapshot);
+  if (persistedSnapshot == null) localStorage.removeItem(discoveriesStorageKey);
+  else localStorage.setItem(discoveriesStorageKey, persistedSnapshot);
+  return { before, after };
+}
+
 async function runTvDebug() {
   if (!getWorkerUrl()) {
     tvDebugOutput.textContent = "Connect the Worker first.";
@@ -1221,6 +1271,7 @@ async function runTvDebug() {
     }
     const normalEpisodes = normalPayload.episodes || [];
     lines.push(`Normal discover: ${normalEpisodes.length} episode${normalEpisodes.length === 1 ? "" : "s"} returned`);
+    const mergeTrace = simulateMergeForTrace(normalEpisodes);
     for (const normalEp of normalEpisodes) {
       const existingById = discoveries.find(item => item.id === normalEp.id);
       const existingByFp = discoveries.find(item => discoveryFingerprint(item) === discoveryFingerprint(normalEp));
@@ -1236,6 +1287,11 @@ async function runTvDebug() {
             : "new pending episode";
       lines.push(`Intake: ${episodeNumberLabel(normalEp) || "no S/E"} · ${normalEp.airdate || "no date"} · ${reason}`);
     }
+
+    mergeTrace.before.forEach((row, index) => {
+      lines.push(`Merge before ${index + 1}: ${JSON.stringify(row)}`);
+      lines.push(`Merge after ${index + 1}: ${JSON.stringify(mergeTrace.after[index])}`);
+    });
 
     if (!payload.reconciled?.length) {
       lines.push("Consensus: no episode");
