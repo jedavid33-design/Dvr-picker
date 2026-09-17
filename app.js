@@ -15,6 +15,8 @@ const lastTvCheckStorageKey = "dvrPicker.lastTvCheck.v1";
 const lastTvEpisodeDateStorageKey = "dvrPicker.lastTvEpisodeDate.v1";
 const lastFranchiseCheckStorageKey = "dvrPicker.lastFranchiseCheck.v1";
 const trackedTvExpandedStorageKey = "dvrPicker.trackedTvExpanded.v1";
+const weightModeStorageKey = "dvrPicker.weightMode.v1";
+const autoWeightStartedStorageKey = "dvrPicker.autoWeightStarted.v1";
 let movies = load();
 let lastState = null;
 let selectedIndex = null;
@@ -34,6 +36,9 @@ const newMovie = document.getElementById("newMovie");
 const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
 const increaseAllBtn = document.getElementById("increaseAllBtn");
+const manualWeightModeBtn = document.getElementById("manualWeightModeBtn");
+const autoWeightModeBtn = document.getElementById("autoWeightModeBtn");
+const weightModeHint = document.getElementById("weightModeHint");
 const checkTvBtn = document.getElementById("checkTvBtn");
 const discoveryList = document.getElementById("discoveryList");
 const tvDiscoveryStatus = document.getElementById("tvDiscoveryStatus");
@@ -60,6 +65,7 @@ const trackedTvDetails = document.getElementById("trackedTvDetails");
 let trackedShows = loadJsonArray(trackedShowsStorageKey);
 let discoveries = loadJsonArray(discoveriesStorageKey);
 let tvSearchBusy = false;
+let weightMode = localStorage.getItem(weightModeStorageKey) === "auto" ? "auto" : "manual";
 const tvRollingTraceStorageKey = "dvrPicker.tvRollingTrace.v1";
 
 function writeRollingTrace(lines) {
@@ -125,7 +131,47 @@ function load() {
   }
 }
 function save() { localStorage.setItem(storageKey, JSON.stringify(movies)); }
-function totalWeight() { return movies.reduce((sum, m) => sum + m.weight, 0); }
+function localDayNumber(value) {
+  const d = value ? new Date(String(value) + (String(value).length === 10 ? "T12:00:00" : "")) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+}
+function automaticGrowthForDays(days) {
+  const age = Math.max(0, Number(days) || 0);
+  return age <= 3 ? 1 : Math.pow(1.2, age - 3);
+}
+function effectiveWeight(movie) {
+  const manual = Math.max(1, Number(movie?.weight) || 1);
+  if (movie?.locked || weightMode !== "auto") return manual;
+  const today = localDayNumber(new Date().toISOString().slice(0,10));
+  const air = localDayNumber(movie?.airdate);
+  if (air != null && today != null) return automaticGrowthForDays(today - air);
+  const started = localDayNumber(movie?.autoWeightStartedAt || localStorage.getItem(autoWeightStartedStorageKey));
+  if (started != null && today != null) return manual * automaticGrowthForDays(today - started);
+  return manual;
+}
+function totalWeight() { return movies.reduce((sum, m) => sum + effectiveWeight(m), 0); }
+function setWeightMode(mode) {
+  weightMode = mode === "auto" ? "auto" : "manual";
+  if (weightMode === "auto" && !localStorage.getItem(autoWeightStartedStorageKey)) {
+    localStorage.setItem(autoWeightStartedStorageKey, new Date().toISOString().slice(0,10));
+  }
+  localStorage.setItem(weightModeStorageKey, weightMode);
+  updateWeightModeUi();
+  render();
+}
+function updateWeightModeUi() {
+  const automatic = weightMode === "auto";
+  manualWeightModeBtn?.classList.toggle("active", !automatic);
+  autoWeightModeBtn?.classList.toggle("active", automatic);
+  if (increaseAllBtn) {
+    increaseAllBtn.disabled = automatic;
+    increaseAllBtn.hidden = automatic;
+  }
+  if (weightModeHint) weightModeHint.textContent = automatic
+    ? "3-day grace, then ×1.2/day. Dated episodes use airdate; undated items grow from their stored starting value."
+    : "Manual +1/day weighting.";
+}
 
 function loadLastSpin() {
   try {
@@ -171,7 +217,7 @@ function weightedPick() {
   const total = totalWeight();
   let r = Math.random() * total;
   for (let i = 0; i < movies.length; i++) {
-    r -= movies[i].weight;
+    r -= effectiveWeight(movies[i]);
     if (r < 0) return i;
   }
   return movies.length - 1;
@@ -180,8 +226,8 @@ function weightedPick() {
 function segmentCenter(index) {
   const total = totalWeight();
   let start = 0;
-  for (let i = 0; i < index; i++) start += movies[i].weight / total * Math.PI * 2;
-  const arc = movies[index].weight / total * Math.PI * 2;
+  for (let i = 0; i < index; i++) start += effectiveWeight(movies[i]) / total * Math.PI * 2;
+  const arc = effectiveWeight(movies[index]) / total * Math.PI * 2;
   return start + arc / 2;
 }
 
@@ -303,6 +349,7 @@ function markWatched() {
   render();
 }
 function increaseAllValues() {
+  if (weightMode === "auto") return;
 
   lastState = JSON.stringify(movies);
   const pendingTitle = selectedIndex == null ? null : movies[selectedIndex]?.title;
@@ -355,7 +402,7 @@ function drawWheel() {
   let start = 0;
   const total = totalWeight();
   movies.forEach((movie, i) => {
-    const arc = movie.weight / total * Math.PI * 2;
+    const arc = effectiveWeight(movie) / total * Math.PI * 2;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, radius, start, start + arc);
@@ -431,8 +478,9 @@ function renderList() {
   movies.forEach((movie, index) => {
     const row = document.createElement("div");
     row.className = "movie-row";
-    const pct = Math.round(movie.weight / total * 100);
-    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${movie.weight}</div><button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`;
+    const shownWeight = effectiveWeight(movie);
+    const pct = Math.round(shownWeight / total * 100);
+    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${weightMode === "auto" ? shownWeight.toFixed(shownWeight < 10 ? 1 : 0) : movie.weight}</div><button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`;
     row.querySelector(".remove").onclick = () => {
       lastState = JSON.stringify(movies);
       const removedSelectedItem = index === selectedIndex;
@@ -495,6 +543,9 @@ if (restoredSpin) {
 
 render();
 increaseAllBtn.onclick = increaseAllValues;
+manualWeightModeBtn?.addEventListener("click", () => setWeightMode("manual"));
+autoWeightModeBtn?.addEventListener("click", () => setWeightMode("auto"));
+updateWeightModeUi();
 document.fonts?.ready.then(drawWheel);
 
 
@@ -754,7 +805,7 @@ function addDiscoveryToWheel(id) {
 
   // Preservation rule: append only. Do not shuffle, reset, reweight, or migrate.
   lastState = JSON.stringify(movies);
-  movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false });
+  movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
   ep.status = "added";
   ep.reviewedAt = new Date().toISOString();
   save();
@@ -777,7 +828,7 @@ function addAllDiscoveries() {
   if (!pending.length) return;
   lastState = JSON.stringify(movies);
   for (const ep of pending) {
-    movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false });
+    movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
     ep.status = "added";
     ep.reviewedAt = new Date().toISOString();
   }
