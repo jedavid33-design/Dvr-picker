@@ -1355,28 +1355,41 @@ async function discoverDate(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > maxAirdate) {
     throw new Error(`TV checks cannot include ${date || "an invalid date"}; newest allowed date is ${maxAirdate}.`);
   }
-  const payload = await workerFetch("/api/discover", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ date, maxAirdate, shows: trackedShows })
-  });
-  mergeDiscoveries(payload.episodes || []);
-  // Surface each successful date immediately. A later provider/date failure must not
-  // hide an episode that was already discovered and saved.
-  renderDiscoveries();
-  if (Array.isArray(payload.resolvedShows)) {
-    for (const resolved of payload.resolvedShows) {
-      const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
-      if (item) {
-        if (resolved.tvmazeId) item.tvmazeId = resolved.tvmazeId;
-        if (resolved.episodateId) item.episodateId = resolved.episodateId;
-        if (resolved.tmdbId) item.tmdbId = resolved.tmdbId;
-        if (resolved.tvdbId) item.tvdbId = resolved.tvdbId;
-        item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
-      }
-    }
-    saveTrackedShows();
+
+  // A full tracked list can require hundreds of upstream provider requests. Keep each
+  // Worker invocation deliberately small so later shows cannot disappear when one
+  // request exhausts its provider/subrequest budget. Five shows per request leaves
+  // ample room for identity resolution + TVmaze/EpisoDate/TMDB lookups.
+  const DISCOVERY_BATCH_SIZE = 5;
+  const allEpisodes = [];
+  const allResolvedShows = [];
+
+  for (let i = 0; i < trackedShows.length; i += DISCOVERY_BATCH_SIZE) {
+    const shows = trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE);
+    const payload = await workerFetch("/api/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date, maxAirdate, shows })
+    });
+    if (Array.isArray(payload.episodes)) allEpisodes.push(...payload.episodes);
+    if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
   }
+
+  const payload = { episodes: allEpisodes, resolvedShows: allResolvedShows };
+  mergeDiscoveries(allEpisodes);
+  renderDiscoveries();
+
+  for (const resolved of allResolvedShows) {
+    const item = trackedShows.find(x => x.title === resolved.title || x.canonicalName === resolved.title);
+    if (item) {
+      if (resolved.tvmazeId) item.tvmazeId = resolved.tvmazeId;
+      if (resolved.episodateId) item.episodateId = resolved.episodateId;
+      if (resolved.tmdbId) item.tmdbId = resolved.tmdbId;
+      if (resolved.tvdbId) item.tvdbId = resolved.tvdbId;
+      item.canonicalName = resolved.canonicalName || item.canonicalName || item.title;
+    }
+  }
+  saveTrackedShows();
   localStorage.setItem(lastTvEpisodeDateStorageKey, date);
   localStorage.setItem(lastTvCheckStorageKey, todayString());
   return payload;

@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.25";
+const VERSION = "0.2.26";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.25";
+const UA = "DVR-Wheel/0.2.26";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -45,6 +45,7 @@ export default {
           yesterdayOnlyGuard: true,
           tmdbSeriesPointerRecovery: true,
           discoveryDiagnostics: true,
+          boundedDiscoveryBatches: true,
           tmdbFallback: Boolean(env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN),
           tvdbFallback: Boolean(env?.TVDB_API_KEY),
           tvdbAttribution: true
