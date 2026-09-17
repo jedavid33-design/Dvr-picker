@@ -1120,18 +1120,26 @@ async function initialBackfillShow(show) {
 
 function refreshDebugShowOptions() {
   if (!debugShowSelect) return;
-  const selected = debugShowSelect.value;
+  const selectedTitle = debugShowSelect.selectedOptions?.[0]?.dataset?.title || "";
+  let shows = Array.isArray(trackedShows) ? trackedShows : [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(TRACKED_KEY) || "[]");
+    if (Array.isArray(stored) && stored.length) shows = stored;
+  } catch {}
   debugShowSelect.innerHTML = "";
-  [...trackedShows]
-    .sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), undefined, { sensitivity: "base" }))
-    .forEach((show, index) => {
+  [...shows]
+    .sort((a, b) => String(a.title || a.canonicalName || "").localeCompare(String(b.title || b.canonicalName || ""), undefined, { sensitivity: "base" }))
+    .forEach((show) => {
       const option = document.createElement("option");
-      option.value = String(index);
-      option.dataset.title = show.title || "";
+      option.value = String(show.tvmazeId || show.episodateId || show.tmdbId || show.tvdbId || show.title || show.canonicalName || "");
+      option.dataset.title = show.title || show.canonicalName || "";
       option.textContent = show.title || show.canonicalName || "Untitled";
       debugShowSelect.appendChild(option);
     });
-  if (selected && [...debugShowSelect.options].some(o => o.value === selected)) debugShowSelect.value = selected;
+  if (selectedTitle) {
+    const match = [...debugShowSelect.options].find(o => o.dataset.title === selectedTitle);
+    if (match) debugShowSelect.value = match.value;
+  }
 }
 
 function debugSuppressionReason(ep) {
@@ -1345,3 +1353,7 @@ function initTvDiscovery() {
 
 initTrackedTvDisclosure();
 initTvDiscovery();
+
+// v0.2.16: refresh diagnostics after localStorage-backed tracked state has initialized.
+queueMicrotask(() => refreshDebugShowOptions());
+window.addEventListener("pageshow", () => refreshDebugShowOptions());
