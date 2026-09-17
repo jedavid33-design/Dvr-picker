@@ -60,6 +60,25 @@ const trackedTvDetails = document.getElementById("trackedTvDetails");
 let trackedShows = loadJsonArray(trackedShowsStorageKey);
 let discoveries = loadJsonArray(discoveriesStorageKey);
 let tvSearchBusy = false;
+const tvRollingTraceStorageKey = "dvrPicker.tvRollingTrace.v1";
+
+function writeRollingTrace(lines) {
+  try { localStorage.setItem(tvRollingTraceStorageKey, JSON.stringify(lines.slice(-80))); } catch {}
+}
+
+function rollingTraceSnapshot(label) {
+  const pending = pendingEpisodeDiscoveries().map(item => ({
+    id: item.id || null,
+    fp: discoveryFingerprint(item),
+    show: item.show || item.trackedTitle || null,
+    season: item.season ?? null,
+    number: item.number ?? null,
+    airdate: item.airdate || null,
+    status: item.status || "pending"
+  }));
+  return `${label}: ${JSON.stringify(pending)}`;
+}
+
 
 
 function initTrackedTvDisclosure() {
@@ -1292,6 +1311,17 @@ async function runTvDebug() {
       lines.push(`Merge before ${index + 1}: ${JSON.stringify(row)}`);
       lines.push(`Merge after ${index + 1}: ${JSON.stringify(mergeTrace.after[index])}`);
     });
+    try {
+      const rollingTrace = JSON.parse(localStorage.getItem(tvRollingTraceStorageKey) || "[]");
+      if (rollingTrace.length) {
+        lines.push("Last normal rolling check:");
+        for (const entry of rollingTrace) lines.push(entry);
+      } else {
+        lines.push("Last normal rolling check: no trace recorded yet");
+      }
+    } catch {
+      lines.push("Last normal rolling check: unreadable trace");
+    }
 
     if (!payload.reconciled?.length) {
       lines.push("Consensus: no episode");
@@ -1358,12 +1388,24 @@ async function discoverYesterday({ automatic = false } = {}) {
   checkTvBtn.disabled = true;
   checkTvBtn.textContent = "Checking…";
   const dates = rollingRecheckDates(3);
+  const trace = [`Started ${new Date().toISOString()} · dates ${dates.join(", ")}`, rollingTraceSnapshot("before loop")];
+  writeRollingTrace(trace);
   tvDiscoveryStatus.textContent = `Checking recent TV…`;
   try {
-    for (const date of dates) await discoverDate(date);
+    for (const date of dates) {
+      const payload = await discoverDate(date);
+      trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
+      trace.push(rollingTraceSnapshot(`after ${date}`));
+      writeRollingTrace(trace);
+    }
     renderTrackedShows();
     renderDiscoveries();
+    trace.push(rollingTraceSnapshot("after final render"));
+    writeRollingTrace(trace);
   } catch (error) {
+    trace.push(`ERROR: ${error.message}`);
+    trace.push(rollingTraceSnapshot("after error"));
+    writeRollingTrace(trace);
     tvDiscoveryStatus.textContent = automatic ? `Automatic check skipped: ${error.message}` : error.message;
   } finally {
     tvSearchBusy = false;
