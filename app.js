@@ -1015,6 +1015,24 @@ function discoveryFingerprint(item) {
 }
 
 function mergeDiscoveries(incoming) {
+  // Canonicalize exact episode identities first. Provider reconciliation may choose
+  // a different source ID on a later check, but show + S/E + airdate is still the
+  // same broadcast. Keep one record and preserve its review state.
+  const canonicalExisting = new Map();
+  for (const item of discoveries) {
+    const fp = discoveryFingerprint(item) || item.id;
+    const prior = canonicalExisting.get(fp);
+    if (!prior) {
+      canonicalExisting.set(fp, item);
+      continue;
+    }
+    const priorReviewed = ["added", "dismissed"].includes(prior.status);
+    const itemReviewed = ["added", "dismissed"].includes(item.status);
+    if (itemReviewed && !priorReviewed) canonicalExisting.set(fp, item);
+    else if (itemReviewed === priorReviewed && Date.parse(item.reviewedAt || 0) > Date.parse(prior.reviewedAt || 0)) canonicalExisting.set(fp, item);
+  }
+  discoveries = Array.from(canonicalExisting.values());
+
   const byId = new Map(discoveries.map(item => [item.id, item]));
   const byFingerprint = new Map(discoveries.map(item => [discoveryFingerprint(item), item]).filter(([key]) => key));
   const reviewedByBroadcast = new Map();
@@ -1181,6 +1199,11 @@ async function runTvDebug() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ date, show })
     });
+    const normalPayload = await workerFetch("/api/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date, maxAirdate: yesterdayString(), shows: [show] })
+    });
     const lines = [`${show.title} · ${date}`];
     for (const source of ["tvmaze", "episodate", "tmdb", "tvdb"]) {
       const info = payload.providers?.[source] || {};
@@ -1196,6 +1219,24 @@ async function runTvDebug() {
         lines.push(`${source}: ${episodeNumberLabel(ep) || "no S/E"}${ep.title ? ` · ${ep.title}` : ""} · ${ep.airdate || "no date"}`);
       }
     }
+    const normalEpisodes = normalPayload.episodes || [];
+    lines.push(`Normal discover: ${normalEpisodes.length} episode${normalEpisodes.length === 1 ? "" : "s"} returned`);
+    for (const normalEp of normalEpisodes) {
+      const existingById = discoveries.find(item => item.id === normalEp.id);
+      const existingByFp = discoveries.find(item => discoveryFingerprint(item) === discoveryFingerprint(normalEp));
+      const reviewedMatch = discoveries.find(item =>
+        ["added", "dismissed"].includes(item.status) && sameReviewedBroadcast(item, normalEp)
+      );
+      const reason = existingById
+        ? `existing id → ${existingById.status || "pending"}`
+        : existingByFp
+          ? `existing fingerprint → ${existingByFp.status || "pending"}`
+          : reviewedMatch
+            ? `reviewed-broadcast match → ${reviewedMatch.status}`
+            : "new pending episode";
+      lines.push(`Intake: ${episodeNumberLabel(normalEp) || "no S/E"} · ${normalEp.airdate || "no date"} · ${reason}`);
+    }
+
     if (!payload.reconciled?.length) {
       lines.push("Consensus: no episode");
       lines.push("Final: nothing to surface");
@@ -1206,7 +1247,7 @@ async function runTvDebug() {
         lines.push(`Final: ${debugSuppressionReason(normalized)}`);
       }
     }
-    tvDebugOutput.textContent = lines.join("\\n");
+    tvDebugOutput.textContent = lines.join("\n");
   } catch (error) {
     tvDebugOutput.textContent = `Debug failed: ${error.message}`;
   } finally {
