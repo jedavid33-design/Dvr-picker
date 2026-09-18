@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.28";
+const VERSION = "0.2.29";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.28";
+const UA = "DVR-Wheel/0.2.29";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -631,6 +631,7 @@ async function debugDiscovery(date, raw, env) {
 async function discover(date, shows, env) {
   const episodes = [];
   const resolvedShows = [];
+  const retryShows = [];
   let schedule = [];
   try { schedule = await tvmazeScheduleByDate(date); } catch { schedule = []; }
 
@@ -676,20 +677,21 @@ async function discover(date, shows, env) {
     // chain stopped as soon as one provider returned anything, which let a stale EpisoDate
     // record mask a correct TMDB episode. v0.2.6 reconciles before surfacing results.
     let mazeEpisodes = [], epiEpisodes = [], tmdbEpisodes = [], tvdbEpisodes = [];
+    let providerLookupFailed = false;
     if (mazeId) {
-      try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch { mazeEpisodes = []; }
+      try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch { mazeEpisodes = []; providerLookupFailed = true; }
     }
     if (!mazeEpisodes.length && schedule.length) {
       mazeEpisodes = await tvmazeScheduleEpisodesForShow(schedule, canonicalName || title, mazeId);
     }
     if (epiId) {
-      try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; }
+      try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; providerLookupFailed = true; }
     }
     if (tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) {
-      try { tmdbEpisodes = await tmdbEpisodesByDate(tmdbId, date, env); } catch { tmdbEpisodes = []; }
+      try { tmdbEpisodes = await tmdbEpisodesByDate(tmdbId, date, env); } catch { tmdbEpisodes = []; providerLookupFailed = true; }
     }
     if (tvdbId && env?.TVDB_API_KEY) {
-      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; }
+      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; providerLookupFailed = true; }
     }
 
     // A provider result is eligible only when the provider's own stored airdate
@@ -704,7 +706,13 @@ async function discover(date, shows, env) {
       normalized[source] = normalized[source].filter(ep => ep.airdate === date);
     }
 
-    for (const ep of reconcileProviderEpisodes(normalized)) episodes.push(ep);
+    const reconciled = reconcileProviderEpisodes(normalized);
+    for (const ep of reconciled) episodes.push(ep);
+
+    // Batch calls may hit an upstream request/rate ceiling without failing the whole
+    // Worker invocation. Flag only shows whose provider lookup actually failed so the
+    // client can retry those shows alone. A successful no-episode lookup stays final.
+    if (providerLookupFailed) retryShows.push(title);
 
     resolvedShows.push({
       title,
@@ -717,7 +725,7 @@ async function discover(date, shows, env) {
     });
   }
 
-  return { episodes: dedupeEpisodes(episodes), resolvedShows };
+  return { episodes: dedupeEpisodes(episodes), resolvedShows, retryShows };
 }
 
 function episodeSignature(ep) {
