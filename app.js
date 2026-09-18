@@ -1440,10 +1440,45 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
       allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
     }
     if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
+
+    const resolvedTitles = new Set((payload.resolvedShows || []).map(row => normalizeTrackedName(row.title)));
+    const retryTitles = new Set((payload.retryShows || []).map(normalizeTrackedName));
+    for (const show of shows) {
+      const key = normalizeTrackedName(show.title || show.canonicalName);
+      if (!resolvedTitles.has(key)) retryTitles.add(key);
+    }
+
+    // Retry only suspect rows in their own Worker invocation. This preserves the fast
+    // batched path for normal shows while giving a show such as syndicated Wheel of
+    // Fortune the exact same isolated path that TV Debug proved reliable.
+    for (const key of retryTitles) {
+      const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
+      if (!show) continue;
+      const retryPayload = await workerFetch("/api/discover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ date, maxAirdate, shows: [show] })
+      });
+      if (Array.isArray(retryPayload.episodes)) {
+        allEpisodes.push(...retryPayload.episodes.filter(ep => ep?.airdate === date));
+      }
+      if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
+    }
   }
 
-  const payload = { episodes: allEpisodes, resolvedShows: allResolvedShows };
-  mergeDiscoveries(allEpisodes);
+  // A retry can duplicate an episode already returned by its batch. Collapse exact
+  // show/S/E/date duplicates before merging into local discovery state.
+  const uniqueEpisodes = [];
+  const seenEpisodes = new Set();
+  for (const ep of allEpisodes) {
+    const key = [normalizeTrackedName(ep.show || ep.trackedTitle), ep.season ?? "", ep.number ?? "", ep.airdate || ""].join("|");
+    if (seenEpisodes.has(key)) continue;
+    seenEpisodes.add(key);
+    uniqueEpisodes.push(ep);
+  }
+
+  const payload = { episodes: uniqueEpisodes, resolvedShows: allResolvedShows };
+  mergeDiscoveries(uniqueEpisodes);
   renderDiscoveries();
 
   for (const resolved of allResolvedShows) {
