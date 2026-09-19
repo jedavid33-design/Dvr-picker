@@ -1508,8 +1508,14 @@ async function discoverYesterday({ automatic = false } = {}) {
   tvDiscoveryStatus.textContent = `Checking recent TV…`;
   try {
     for (const date of dates) {
-      const payload = await discoverDate(date);
-      trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
+      try {
+        const payload = await discoverDate(date);
+        trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
+      } catch (error) {
+        // A transient Worker/network failure on one date must not abort the rest of
+        // the rolling window. Record it and continue so newer dates still get checked.
+        trace.push(`${date} ERROR: ${error.message}`);
+      }
       trace.push(rollingTraceSnapshot(`after ${date}`));
       writeRollingTrace(trace);
     }
