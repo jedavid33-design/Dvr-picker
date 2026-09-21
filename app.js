@@ -1416,6 +1416,8 @@ document.addEventListener("click", (event) => {
 });
 
 async function discoverDate(date, { batchSize = 5 } = {}) {
+  const diagStarted = performance.now();
+  const diag = { date, batches: 0, retries: 0, batchMs: [], retryMs: [], pruned: [] };
   const maxAirdate = yesterdayString();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || date > maxAirdate) {
     throw new Error(`TV checks cannot include ${date || "an invalid date"}; newest allowed date is ${maxAirdate}.`);
@@ -1431,11 +1433,14 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
 
   for (let i = 0; i < trackedShows.length; i += DISCOVERY_BATCH_SIZE) {
     const shows = trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE);
+    const batchStarted = performance.now();
+    diag.batches++;
     const payload = await workerFetch("/api/discover", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ date, maxAirdate, shows })
     });
+    diag.batchMs.push(Math.round(performance.now() - batchStarted));
     if (Array.isArray(payload.episodes)) {
       allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
     }
@@ -1454,11 +1459,14 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     for (const key of retryTitles) {
       const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
       if (!show) continue;
+      const retryStarted = performance.now();
+      diag.retries++;
       const retryPayload = await workerFetch("/api/discover", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ date, maxAirdate, shows: [show] })
       });
+      diag.retryMs.push(Math.round(performance.now() - retryStarted));
       if (Array.isArray(retryPayload.episodes)) {
         const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
         if (retryEpisodes.length) {
@@ -1499,7 +1507,9 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     if (item.kind === "series-candidate" || item.airdate !== date) return true;
     const key = normalizeTrackedName(item.show || item.trackedTitle);
     if (!resolvedKeys.has(key)) return true;
-    return supported.has(discoveryFingerprint(item));
+    const keep = supported.has(discoveryFingerprint(item));
+    if (!keep) diag.pruned.push({ show: item.show || item.trackedTitle, season: item.season, number: item.number, airdate: item.airdate });
+    return keep;
   });
   saveDiscoveries();
   renderDiscoveries();
@@ -1517,6 +1527,12 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   saveTrackedShows();
   localStorage.setItem(lastTvEpisodeDateStorageKey, date);
   localStorage.setItem(lastTvCheckStorageKey, todayString());
+  diag.totalMs = Math.round(performance.now() - diagStarted);
+  diag.episodes = uniqueEpisodes.length;
+  diag.pendingAfter = discoveries.filter(x => x.status === "pending").map(x => ({ show: x.show || x.trackedTitle, season: x.season, number: x.number, airdate: x.airdate }));
+  const history = JSON.parse(localStorage.getItem("dvrTvPerformanceDiagnostics") || "[]");
+  history.push(diag);
+  localStorage.setItem("dvrTvPerformanceDiagnostics", JSON.stringify(history.slice(-30)));
   return payload;
 }
 
