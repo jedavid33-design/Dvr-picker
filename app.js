@@ -1564,12 +1564,14 @@ async function discoverYesterday({ automatic = false } = {}) {
   checkTvBtn.textContent = "Checking…";
   const dates = rollingRecheckDates(3);
   const trace = [`Started ${new Date().toISOString()} · dates ${dates.join(", ")}`, rollingTraceSnapshot("before loop")];
+  const rollingEpisodes = [];
   writeRollingTrace(trace);
   tvDiscoveryStatus.textContent = `Checking recent TV…`;
   try {
     for (const date of dates) {
       try {
         const payload = await discoverDate(date);
+        if (Array.isArray(payload?.episodes)) rollingEpisodes.push(...payload.episodes);
         trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
       } catch (error) {
         // A transient Worker/network failure on one date must not abort the rest of
@@ -1579,24 +1581,22 @@ async function discoverYesterday({ automatic = false } = {}) {
       trace.push(rollingTraceSnapshot(`after ${date}`));
       writeRollingTrace(trace);
     }
-    // Reconcile provider-supported duplicates across the completed rolling window.
-    // If the same show/S/E is pending on multiple checked dates, keep the earlier
-    // broadcast and remove only later still-pending duplicates.
-    const checkedDates = new Set(dates);
-    const earliest = new Map();
-    for (const item of discoveries) {
-      if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) continue;
-      if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) continue;
-      const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
-      const prev = earliest.get(key);
-      if (!prev || item.airdate < prev.airdate) earliest.set(key, item);
+    // Use every result observed in this completed rolling run, including earlier
+    // broadcasts that were already reviewed and therefore are not pending cards.
+    const earliestByEpisode = new Map();
+    for (const ep of rollingEpisodes) {
+      if (!Number.isFinite(Number(ep.season)) || !Number.isFinite(Number(ep.number))) continue;
+      const key = [normalizeTrackedName(ep.show || ep.trackedTitle), Number(ep.season), Number(ep.number)].join("|");
+      const prev = earliestByEpisode.get(key);
+      if (!prev || ep.airdate < prev) earliestByEpisode.set(key, ep.airdate);
     }
+    const checkedDates = new Set(dates);
     discoveries = discoveries.filter(item => {
       if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
       if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) return true;
       const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
-      const keep = earliest.get(key);
-      return !keep || item === keep || item.airdate === keep.airdate;
+      const earliestDate = earliestByEpisode.get(key);
+      return !earliestDate || item.airdate <= earliestDate;
     });
     saveDiscoveries();
     renderTrackedShows();
