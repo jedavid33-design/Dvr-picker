@@ -131,6 +131,19 @@ function load() {
   }
 }
 function save() { localStorage.setItem(storageKey, JSON.stringify(movies)); }
+function insertAtRandomWheelPosition(item) {
+  // Existing array order IS the frozen wheel order. Choose one of N+1 insertion
+  // boundaries so adding an item never changes the relative order of survivors.
+  const index = Math.floor(Math.random() * (movies.length + 1));
+  movies.splice(index, 0, item);
+  return index;
+}
+function compareEpisodeListTitles(a, b) {
+  return String(a?.title || "").localeCompare(String(b?.title || ""), undefined, {
+    sensitivity: "base",
+    numeric: true
+  });
+}
 function localDayNumber(value) {
   const d = value ? new Date(String(value) + (String(value).length === 10 ? "T12:00:00" : "")) : null;
   if (!d || Number.isNaN(d.getTime())) return null;
@@ -338,8 +351,6 @@ function markWatched() {
   // Keep the locked Second Spin entry.
   movies = movies.filter((m, i) => i !== selectedIndex || m.locked);
 
-  shuffleItems();
-
   selectedIndex = null;
   clearLastSpin();
   setWinner("Tap Spin");
@@ -358,8 +369,6 @@ function increaseAllValues() {
   ...m,
   weight: m.locked ? 1 : m.weight + 1
 }));
-
-shuffleItems();
 
 if (pendingTitle) {
   selectedIndex = movies.findIndex(item => item.title === pendingTitle);
@@ -475,7 +484,11 @@ function renderList() {
   movieList.innerHTML = "";
   const total = totalWeight();
   totalSlices.textContent = `${movies.length} items`;
-  movies.forEach((movie, index) => {
+  const sorted = movies
+    .map((movie, wheelIndex) => ({ movie, wheelIndex }))
+    .sort((a, b) => compareEpisodeListTitles(a.movie, b.movie));
+
+  sorted.forEach(({ movie, wheelIndex }) => {
     const row = document.createElement("div");
     row.className = "movie-row";
     const shownWeight = effectiveWeight(movie);
@@ -483,14 +496,14 @@ function renderList() {
     row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${weightMode === "auto" ? shownWeight.toFixed(shownWeight < 10 ? 1 : 0) : movie.weight}</div><button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`;
     row.querySelector(".remove").onclick = () => {
       lastState = JSON.stringify(movies);
-      const removedSelectedItem = index === selectedIndex;
-      movies.splice(index, 1);
+      const removedSelectedItem = wheelIndex === selectedIndex;
+      movies.splice(wheelIndex, 1);
       if (removedSelectedItem) {
         selectedIndex = null;
         setWinner("Tap Spin");
         watchedBtn.disabled = true;
         clearLastSpin();
-      } else if (selectedIndex != null && index < selectedIndex) {
+      } else if (selectedIndex != null && wheelIndex < selectedIndex) {
         selectedIndex -= 1;
         saveLastSpin();
       }
@@ -523,7 +536,7 @@ addBtn.onclick = () => {
   const title = newMovie.value.trim();
   if (!title) return;
   lastState = JSON.stringify(movies);
-  movies.push({ title, weight: 1 });
+  insertAtRandomWheelPosition({ title, weight: 1 });
   newMovie.value = "";
   save();
   render();
@@ -803,9 +816,9 @@ function addDiscoveryToWheel(id) {
   const ep = discoveries.find(item => item.id === id);
   if (!ep || ep.status === "added" || ep.kind === "series-candidate") return;
 
-  // Preservation rule: append only. Do not shuffle, reset, reweight, or migrate.
+  // Freeze survivor order; only the newly added episode chooses a random wheel slot.
   lastState = JSON.stringify(movies);
-  movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
+  insertAtRandomWheelPosition({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
   ep.status = "added";
   ep.reviewedAt = new Date().toISOString();
   save();
@@ -828,7 +841,7 @@ function addAllDiscoveries() {
   if (!pending.length) return;
   lastState = JSON.stringify(movies);
   for (const ep of pending) {
-    movies.push({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
+    insertAtRandomWheelPosition({ title: episodeWheelTitle(ep), weight: 1, locked: false, airdate: ep.airdate || null });
     ep.status = "added";
     ep.reviewedAt = new Date().toISOString();
   }
