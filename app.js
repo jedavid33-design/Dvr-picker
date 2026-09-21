@@ -1444,64 +1444,63 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   const allEpisodes = [];
   const allResolvedShows = [];
 
-  const batches = [];
   for (let i = 0; i < trackedShows.length; i += DISCOVERY_BATCH_SIZE) {
-    batches.push(trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE));
-  }
+    const shows = trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE);
+    const batchStarted = performance.now();
+    diag.batches++;
+    const payload = await workerFetch("/api/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date, maxAirdate, shows })
+    });
+    diag.batchMs.push(Math.round(performance.now() - batchStarted));
+    if (Array.isArray(payload.episodes)) allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
+    if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
 
-  // Run at most two Worker batches concurrently. Each Worker request remains the same
-  // small size, so provider/subrequest pressure inside a request does not increase.
-  for (let b = 0; b < batches.length; b += 2) {
-    const pair = batches.slice(b, b + 2);
-    const results = await Promise.all(pair.map(async shows => {
-      const batchStarted = performance.now();
-      const payload = await workerFetch("/api/discover", {
+    const resolvedTitles = new Set((payload.resolvedShows || []).map(row => normalizeTrackedName(row.title)));
+    const retryTitles = new Set((payload.retryShows || []).map(normalizeTrackedName));
+    for (const show of shows) {
+      const key = normalizeTrackedName(show.title || show.canonicalName);
+      if (!resolvedTitles.has(key)) retryTitles.add(key);
+    }
+
+    // If this batch conflicts with an already-pending identity for the same show/date,
+    // verify that show in isolation before allowing the batch to replace it.
+    for (const ep of payload.episodes || []) {
+      if (ep?.airdate !== date) continue;
+      const key = normalizeTrackedName(ep.show || ep.trackedTitle);
+      const existing = discoveries.find(item =>
+        item.status === "pending" &&
+        item.airdate === date &&
+        normalizeTrackedName(item.show || item.trackedTitle) === key
+      );
+      if (existing && (Number(existing.season) !== Number(ep.season) || Number(existing.number) !== Number(ep.number))) {
+        retryTitles.add(key);
+      }
+    }
+
+    for (const key of retryTitles) {
+      const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
+      if (!show) continue;
+      const retryStarted = performance.now();
+      diag.retries++;
+      const retryPayload = await workerFetch("/api/discover", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date, maxAirdate, shows })
+        body: JSON.stringify({ date, maxAirdate, shows: [show] })
       });
-      const batchMs = Math.round(performance.now() - batchStarted);
-      return { shows, payload, batchMs };
-    }));
-
-    for (const { shows, payload, batchMs } of results) {
-      diag.batches++;
-      diag.batchMs.push(batchMs);
-      if (Array.isArray(payload.episodes)) {
-        allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
-      }
-      if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
-
-      const resolvedTitles = new Set((payload.resolvedShows || []).map(row => normalizeTrackedName(row.title)));
-      const retryTitles = new Set((payload.retryShows || []).map(normalizeTrackedName));
-      for (const show of shows) {
-        const key = normalizeTrackedName(show.title || show.canonicalName);
-        if (!resolvedTitles.has(key)) retryTitles.add(key);
-      }
-
-      for (const key of retryTitles) {
-        const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
-        if (!show) continue;
-        const retryStarted = performance.now();
-        diag.retries++;
-        const retryPayload = await workerFetch("/api/discover", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ date, maxAirdate, shows: [show] })
-        });
-        diag.retryMs.push(Math.round(performance.now() - retryStarted));
-        if (Array.isArray(retryPayload.episodes)) {
-          const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
-          if (retryEpisodes.length) {
-            for (let j = allEpisodes.length - 1; j >= 0; j--) {
-              const ep = allEpisodes[j];
-              if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) allEpisodes.splice(j, 1);
-            }
-            allEpisodes.push(...retryEpisodes);
+      diag.retryMs.push(Math.round(performance.now() - retryStarted));
+      if (Array.isArray(retryPayload.episodes)) {
+        const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
+        if (retryEpisodes.length) {
+          for (let j = allEpisodes.length - 1; j >= 0; j--) {
+            const ep = allEpisodes[j];
+            if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) allEpisodes.splice(j, 1);
           }
+          allEpisodes.push(...retryEpisodes);
         }
-        if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
       }
+      if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
     }
   }
 
