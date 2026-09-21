@@ -722,10 +722,12 @@ async function discover(date, shows, env) {
     }
     const providerDisagreement = providerSignatures.size > 1;
 
-    // Batch calls may also hit an upstream request/rate ceiling without failing the
-    // whole Worker invocation. Retry failures and disagreements, but do not retry a
-    // successful no-episode lookup merely because a provider has no episode that date.
-    if (providerLookupFailed || providerDisagreement) retryShows.push(title);
+    // Isolated retries are expensive. Retry only when successful providers actually
+    // disagree about the episode identity. A single provider timeout/failure is not
+    // enough evidence to retry the show: the remaining successful provider results are
+    // still reconciled normally. This prevents transient provider failures from turning
+    // a seven-batch date check into 15–20 sequential single-show requests.
+    if (providerDisagreement) retryShows.push(title);
 
     resolvedShows.push({
       title,
