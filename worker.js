@@ -709,7 +709,15 @@ async function discover(date, shows, env) {
       normalized[source] = normalized[source].filter(ep => ep.airdate === date);
     }
 
-    const reconciled = reconcileProviderEpisodes(normalized);
+    const configuredSuccessful = [
+      mazeId && !mazeResult.failed ? "tvmaze" : null,
+      epiId && !epiResult.failed ? "episodate" : null,
+      tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN) && !tmdbResult.failed ? "tmdb" : null,
+      tvdbId && env?.TVDB_API_KEY && !tvdbResult.failed ? "tvdb" : null
+    ].filter(Boolean);
+    const positiveProviders = Object.entries(normalized).filter(([, items]) => Array.isArray(items) && items.length);
+    const loneAgainstThree = positiveProviders.length === 1 && configuredSuccessful.length >= 4;
+    const reconciled = loneAgainstThree ? [] : reconcileProviderEpisodes(normalized);
     for (const ep of reconciled) episodes.push(ep);
 
     // A batch can occasionally return only one provider's stale numbering even though
