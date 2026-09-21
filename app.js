@@ -1398,6 +1398,19 @@ async function runTvDebug() {
         lines.push(`Final: ${debugSuppressionReason(normalized)}`);
       }
     }
+    // Surface timing already captured by normal catch-up/check runs. Reading this
+    // does not start another discovery pass.
+    const perf = JSON.parse(localStorage.getItem("dvrTvPerformanceDiagnostics") || "[]");
+    if (perf.length) {
+      lines.push("");
+      lines.push("Performance diagnostics (latest 10 date checks):");
+      for (const d of perf.slice(-10)) {
+        lines.push(`${d.date}: total ${(d.totalMs / 1000).toFixed(1)}s · batches ${d.batches} [${(d.batchMs || []).join(", ")}ms] · retries ${d.retries} [${(d.retryMs || []).join(", ")}ms] · episodes ${d.episodes} · pruned ${(d.pruned || []).length}`);
+      }
+      const latest = perf[perf.length - 1];
+      lines.push(`Latest pending after: ${JSON.stringify(latest.pendingAfter || [])}`);
+      lines.push(`Latest pruned: ${JSON.stringify(latest.pruned || [])}`);
+    }
     tvDebugOutput.textContent = lines.join("\n");
   } catch (error) {
     tvDebugOutput.textContent = `Debug failed: ${error.message}`;
