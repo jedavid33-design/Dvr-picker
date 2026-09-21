@@ -1646,6 +1646,66 @@ async function catchUpDiscoveries({ automatic = false } = {}) {
   await checkFranchiseCandidates();
 }
 
+async function unifiedOpenTvCheck({ automatic = false } = {}) {
+  if (tvSearchBusy || !getWorkerUrl() || !trackedShows.length) return;
+  const dates = Array.from(new Set([...catchUpDates(), ...rollingRecheckDates(3)])).sort();
+  if (!dates.length) return;
+
+  tvSearchBusy = true;
+  checkTvBtn.disabled = true;
+  checkTvBtn.textContent = "Checking…";
+  const trace = [`Started unified open check ${new Date().toISOString()} · dates ${dates.join(", ")}`, rollingTraceSnapshot("before loop")];
+  const rollingEpisodes = [];
+  writeRollingTrace(trace);
+
+  try {
+    for (let i = 0; i < dates.length; i++) {
+      const date = dates[i];
+      tvDiscoveryStatus.textContent = dates.length === 1
+        ? `Checking ${formatAirdate(date)}…`
+        : `Checking TV ${i + 1} of ${dates.length} · ${formatAirdate(date)}…`;
+      try {
+        const payload = await discoverDate(date);
+        if (Array.isArray(payload?.episodes)) rollingEpisodes.push(...payload.episodes);
+        trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
+      } catch (error) {
+        trace.push(`${date} ERROR: ${error.message}`);
+      }
+      trace.push(rollingTraceSnapshot(`after ${date}`));
+      writeRollingTrace(trace);
+    }
+
+    // Apply the same cross-date correctness rule proven in v0.2.40.
+    const earliestByEpisode = new Map();
+    for (const ep of rollingEpisodes) {
+      if (!Number.isFinite(Number(ep.season)) || !Number.isFinite(Number(ep.number))) continue;
+      const key = [normalizeTrackedName(ep.show || ep.trackedTitle), Number(ep.season), Number(ep.number)].join("|");
+      const prev = earliestByEpisode.get(key);
+      if (!prev || ep.airdate < prev) earliestByEpisode.set(key, ep.airdate);
+    }
+    const checkedDates = new Set(dates);
+    discoveries = discoveries.filter(item => {
+      if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
+      if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) return true;
+      const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
+      const earliestDate = earliestByEpisode.get(key);
+      return !earliestDate || item.airdate <= earliestDate;
+    });
+    saveDiscoveries();
+    renderTrackedShows();
+    renderDiscoveries();
+    trace.push(rollingTraceSnapshot("after final render"));
+    writeRollingTrace(trace);
+  } catch (error) {
+    tvDiscoveryStatus.textContent = automatic ? `Automatic TV check paused: ${error.message}` : error.message;
+  } finally {
+    tvSearchBusy = false;
+    checkTvBtn.disabled = false;
+    checkTvBtn.textContent = "Check yesterday";
+  }
+  await checkFranchiseCandidates();
+}
+
 async function checkFranchiseCandidates({ force = false } = {}) {
   const franchises = trackedShows.filter(item => item.kind === "franchise");
   if (!franchises.length || !getWorkerUrl()) return;
@@ -1704,16 +1764,11 @@ function initTvDiscovery() {
   if (debugDateInput && !debugDateInput.value) debugDateInput.value = yesterdayString();
   refreshDebugShowOptions();
 
-  // Catch up missed airdates (up to 30 days) and always recheck the latest 3 air dates on app open.
-  // No wheel state changes occur until Julie explicitly approves an episode.
+  // One automatic TV action on every open/reload. Build one date set containing
+  // any true catch-up gap plus the latest three completed air dates, then process each
+  // date exactly once. This replaces the old catch-up-then-check-yesterday double pass.
   if (getWorkerUrl() && trackedShows.length) {
-    (async () => {
-      await catchUpDiscoveries({ automatic: true });
-      // Catch-up and rolling recheck serve different jobs. Always recheck the latest
-      // three completed air dates after catch-up so yesterday cannot be skipped merely
-      // because the catch-up cursor says the app is current.
-      await discoverYesterday({ automatic: true });
-    })();
+    unifiedOpenTvCheck({ automatic: true });
   }
 }
 
