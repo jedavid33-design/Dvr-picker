@@ -1488,6 +1488,20 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
 
   const payload = { episodes: uniqueEpisodes, resolvedShows: allResolvedShows };
   mergeDiscoveries(uniqueEpisodes);
+
+  // A completed date check is authoritative for still-pending cards on that date.
+  // Remove unsupported pending identities (for example Big Brother E32 after E37 wins),
+  // but never touch anything Julie has already added or dismissed.
+  const resolvedKeys = new Set(allResolvedShows.map(row => normalizeTrackedName(row.title || row.canonicalName)).filter(Boolean));
+  const supported = new Set(uniqueEpisodes.map(ep => discoveryFingerprint(ep)).filter(Boolean));
+  discoveries = discoveries.filter(item => {
+    if (["added", "dismissed"].includes(item.status)) return true;
+    if (item.kind === "series-candidate" || item.airdate !== date) return true;
+    const key = normalizeTrackedName(item.show || item.trackedTitle);
+    if (!resolvedKeys.has(key)) return true;
+    return supported.has(discoveryFingerprint(item));
+  });
+  saveDiscoveries();
   renderDiscoveries();
 
   for (const resolved of allResolvedShows) {
