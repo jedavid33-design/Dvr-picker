@@ -709,10 +709,20 @@ async function discover(date, shows, env) {
     const reconciled = reconcileProviderEpisodes(normalized);
     for (const ep of reconciled) episodes.push(ep);
 
-    // Batch calls may hit an upstream request/rate ceiling without failing the whole
-    // Worker invocation. Flag only shows whose provider lookup actually failed so the
-    // client can retry those shows alone. A successful no-episode lookup stays final.
-    if (providerLookupFailed) retryShows.push(title);
+    // A batch can occasionally return only one provider's stale numbering even though
+    // another configured provider has the correct episode when the show is queried
+    // alone (Big Brother 2026-09-20: TVmaze E32 vs TMDB E37). If providers that did
+    // return this date disagree on S/E identity, ask the client for an isolated retry.
+    const providerSignatures = new Set();
+    for (const items of Object.values(normalized)) {
+      for (const ep of items || []) providerSignatures.add(episodeSignature(ep));
+    }
+    const providerDisagreement = providerSignatures.size > 1;
+
+    // Batch calls may also hit an upstream request/rate ceiling without failing the
+    // whole Worker invocation. Retry failures and disagreements, but do not retry a
+    // successful no-episode lookup merely because a provider has no episode that date.
+    if (providerLookupFailed || providerDisagreement) retryShows.push(title);
 
     resolvedShows.push({
       title,
