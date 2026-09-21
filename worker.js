@@ -678,20 +678,23 @@ async function discover(date, shows, env) {
     // record mask a correct TMDB episode. v0.2.6 reconciles before surfacing results.
     let mazeEpisodes = [], epiEpisodes = [], tmdbEpisodes = [], tvdbEpisodes = [];
     let providerLookupFailed = false;
-    if (mazeId) {
-      try { mazeEpisodes = await tvmazeEpisodesByDate(mazeId, date); } catch { mazeEpisodes = []; providerLookupFailed = true; }
-    }
+
+    // These provider lookups are independent. Run them together instead of serially so
+    // one slow metadata service does not multiply the wait across every tracked show.
+    const [mazeResult, epiResult, tmdbResult, tvdbResult] = await Promise.all([
+      mazeId ? tvmazeEpisodesByDate(mazeId, date).then(value => ({ value })).catch(() => ({ failed: true, value: [] })) : Promise.resolve({ value: [] }),
+      epiId ? episodateEpisodesByDate(epiId, date).then(value => ({ value })).catch(() => ({ failed: true, value: [] })) : Promise.resolve({ value: [] }),
+      tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN) ? tmdbEpisodesByDate(tmdbId, date, env).then(value => ({ value })).catch(() => ({ failed: true, value: [] })) : Promise.resolve({ value: [] }),
+      tvdbId && env?.TVDB_API_KEY ? tvdbEpisodesByDate(tvdbId, date, env).then(value => ({ value })).catch(() => ({ failed: true, value: [] })) : Promise.resolve({ value: [] })
+    ]);
+    mazeEpisodes = mazeResult.value || [];
+    epiEpisodes = epiResult.value || [];
+    tmdbEpisodes = tmdbResult.value || [];
+    tvdbEpisodes = tvdbResult.value || [];
+    providerLookupFailed = Boolean(mazeResult.failed || epiResult.failed || tmdbResult.failed || tvdbResult.failed);
+
     if (!mazeEpisodes.length && schedule.length) {
       mazeEpisodes = await tvmazeScheduleEpisodesForShow(schedule, canonicalName || title, mazeId);
-    }
-    if (epiId) {
-      try { epiEpisodes = await episodateEpisodesByDate(epiId, date); } catch { epiEpisodes = []; providerLookupFailed = true; }
-    }
-    if (tmdbId && (env?.TMDB_API_KEY || env?.TMDB_READ_TOKEN)) {
-      try { tmdbEpisodes = await tmdbEpisodesByDate(tmdbId, date, env); } catch { tmdbEpisodes = []; providerLookupFailed = true; }
-    }
-    if (tvdbId && env?.TVDB_API_KEY) {
-      try { tvdbEpisodes = await tvdbEpisodesByDate(tvdbId, date, env); } catch { tvdbEpisodes = []; providerLookupFailed = true; }
     }
 
     // A provider result is eligible only when the provider's own stored airdate
