@@ -1460,7 +1460,16 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
         body: JSON.stringify({ date, maxAirdate, shows: [show] })
       });
       if (Array.isArray(retryPayload.episodes)) {
-        allEpisodes.push(...retryPayload.episodes.filter(ep => ep?.airdate === date));
+        const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
+        if (retryEpisodes.length) {
+          for (let j = allEpisodes.length - 1; j >= 0; j--) {
+            const ep = allEpisodes[j];
+            if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) {
+              allEpisodes.splice(j, 1);
+            }
+          }
+          allEpisodes.push(...retryEpisodes);
+        }
       }
       if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
     }
