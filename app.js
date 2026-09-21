@@ -1713,21 +1713,42 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
       writeRollingTrace(trace);
     }
 
-    // Apply the same cross-date correctness rule proven in v0.2.40.
-    const earliestByEpisode = new Map();
-    for (const ep of rollingEpisodes) {
-      if (!Number.isFinite(Number(ep.season)) || !Number.isFinite(Number(ep.number))) continue;
-      const key = [normalizeTrackedName(ep.show || ep.trackedTitle), Number(ep.season), Number(ep.number)].join("|");
-      const prev = earliestByEpisode.get(key);
-      if (!prev || ep.airdate < prev) earliestByEpisode.set(key, ep.airdate);
-    }
+    // Final reconciliation is authoritative for the completed date window.
+    // Pending cards inside the window must be supported by this run, not merely survive
+    // from an earlier run. This lets an old lone-provider ghost age out deterministically.
     const checkedDates = new Set(dates);
+    const exactRunKeys = new Set();
+    const runByShow = new Map();
+    for (const ep of rollingEpisodes) {
+      const show = normalizeTrackedName(ep.show || ep.trackedTitle);
+      const key = [show, Number(ep.season), Number(ep.number), ep.airdate].join("|");
+      exactRunKeys.add(key);
+      if (!runByShow.has(show)) runByShow.set(show, []);
+      runByShow.get(show).push(ep);
+    }
+
     discoveries = discoveries.filter(item => {
       if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
-      if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) return true;
-      const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
-      const earliestDate = earliestByEpisode.get(key);
-      return !earliestDate || item.airdate <= earliestDate;
+      const show = normalizeTrackedName(item.show || item.trackedTitle);
+      const exactKey = [show, Number(item.season), Number(item.number), item.airdate].join("|");
+
+      // If this completed run did not return the pending broadcast at all, remove it.
+      if (!exactRunKeys.has(exactKey)) {
+        trace.push(`final prune unsupported: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate}`);
+        return false;
+      }
+
+      // Providers sometimes describe one broadcast with incompatible numbering systems.
+      // If the same show is returned on adjacent dates, keep the earliest date in this
+      // completed window and reject later-date variants regardless of S/E notation.
+      const sameShow = runByShow.get(show) || [];
+      const earliestShowDate = sameShow.reduce((earliest, ep) =>
+        !earliest || ep.airdate < earliest ? ep.airdate : earliest, null);
+      if (earliestShowDate && item.airdate > earliestShowDate) {
+        trace.push(`final prune later-date variant: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate} → ${earliestShowDate}`);
+        return false;
+      }
+      return true;
     });
     saveDiscoveries();
     renderTrackedShows();
