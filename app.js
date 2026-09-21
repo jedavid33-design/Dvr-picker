@@ -1444,55 +1444,64 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   const allEpisodes = [];
   const allResolvedShows = [];
 
+  const batches = [];
   for (let i = 0; i < trackedShows.length; i += DISCOVERY_BATCH_SIZE) {
-    const shows = trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE);
-    const batchStarted = performance.now();
-    diag.batches++;
-    const payload = await workerFetch("/api/discover", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ date, maxAirdate, shows })
-    });
-    diag.batchMs.push(Math.round(performance.now() - batchStarted));
-    if (Array.isArray(payload.episodes)) {
-      allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
-    }
-    if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
+    batches.push(trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE));
+  }
 
-    const resolvedTitles = new Set((payload.resolvedShows || []).map(row => normalizeTrackedName(row.title)));
-    const retryTitles = new Set((payload.retryShows || []).map(normalizeTrackedName));
-    for (const show of shows) {
-      const key = normalizeTrackedName(show.title || show.canonicalName);
-      if (!resolvedTitles.has(key)) retryTitles.add(key);
-    }
-
-    // Retry only suspect rows in their own Worker invocation. This preserves the fast
-    // batched path for normal shows while giving a show such as syndicated Wheel of
-    // Fortune the exact same isolated path that TV Debug proved reliable.
-    for (const key of retryTitles) {
-      const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
-      if (!show) continue;
-      const retryStarted = performance.now();
-      diag.retries++;
-      const retryPayload = await workerFetch("/api/discover", {
+  // Run at most two Worker batches concurrently. Each Worker request remains the same
+  // small size, so provider/subrequest pressure inside a request does not increase.
+  for (let b = 0; b < batches.length; b += 2) {
+    const pair = batches.slice(b, b + 2);
+    const results = await Promise.all(pair.map(async shows => {
+      const batchStarted = performance.now();
+      const payload = await workerFetch("/api/discover", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date, maxAirdate, shows: [show] })
+        body: JSON.stringify({ date, maxAirdate, shows })
       });
-      diag.retryMs.push(Math.round(performance.now() - retryStarted));
-      if (Array.isArray(retryPayload.episodes)) {
-        const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
-        if (retryEpisodes.length) {
-          for (let j = allEpisodes.length - 1; j >= 0; j--) {
-            const ep = allEpisodes[j];
-            if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) {
-              allEpisodes.splice(j, 1);
-            }
-          }
-          allEpisodes.push(...retryEpisodes);
-        }
+      const batchMs = Math.round(performance.now() - batchStarted);
+      return { shows, payload, batchMs };
+    }));
+
+    for (const { shows, payload, batchMs } of results) {
+      diag.batches++;
+      diag.batchMs.push(batchMs);
+      if (Array.isArray(payload.episodes)) {
+        allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
       }
-      if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
+      if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
+
+      const resolvedTitles = new Set((payload.resolvedShows || []).map(row => normalizeTrackedName(row.title)));
+      const retryTitles = new Set((payload.retryShows || []).map(normalizeTrackedName));
+      for (const show of shows) {
+        const key = normalizeTrackedName(show.title || show.canonicalName);
+        if (!resolvedTitles.has(key)) retryTitles.add(key);
+      }
+
+      for (const key of retryTitles) {
+        const show = shows.find(row => normalizeTrackedName(row.title || row.canonicalName) === key);
+        if (!show) continue;
+        const retryStarted = performance.now();
+        diag.retries++;
+        const retryPayload = await workerFetch("/api/discover", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ date, maxAirdate, shows: [show] })
+        });
+        diag.retryMs.push(Math.round(performance.now() - retryStarted));
+        if (Array.isArray(retryPayload.episodes)) {
+          const retryEpisodes = retryPayload.episodes.filter(ep => ep?.airdate === date);
+          if (retryEpisodes.length) {
+            for (let j = allEpisodes.length - 1; j >= 0; j--) {
+              const ep = allEpisodes[j];
+              if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) allEpisodes.splice(j, 1);
+            }
+            allEpisodes.push(...retryEpisodes);
+          }
+        }
+        if (Array.isArray(retryPayload.resolvedShows)) allResolvedShows.push(...retryPayload.resolvedShows);
+      }
     }
   }
 
@@ -1571,6 +1580,26 @@ async function discoverYesterday({ automatic = false } = {}) {
       trace.push(rollingTraceSnapshot(`after ${date}`));
       writeRollingTrace(trace);
     }
+    // Reconcile provider-supported duplicates across the completed rolling window.
+    // If the same show/S/E is pending on multiple checked dates, keep the earlier
+    // broadcast and remove only later still-pending duplicates.
+    const checkedDates = new Set(dates);
+    const earliest = new Map();
+    for (const item of discoveries) {
+      if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) continue;
+      if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) continue;
+      const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
+      const prev = earliest.get(key);
+      if (!prev || item.airdate < prev.airdate) earliest.set(key, item);
+    }
+    discoveries = discoveries.filter(item => {
+      if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
+      if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) return true;
+      const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
+      const keep = earliest.get(key);
+      return !keep || item === keep || item.airdate === keep.airdate;
+    });
+    saveDiscoveries();
     renderTrackedShows();
     renderDiscoveries();
     trace.push(rollingTraceSnapshot("after final render"));
