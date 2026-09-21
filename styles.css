@@ -426,3 +426,72 @@ dialog::backdrop { background: rgba(47, 40, 59, .24); backdrop-filter: blur(5px)
 }
 .pull-refresh-indicator.visible { opacity: 1; }
 .pull-refresh-indicator.armed { font-weight: 700; }
+
+
+/* v0.2.44 compact disclosure stack */
+.compact-disclosure-card {
+  padding: 0;
+  overflow: hidden;
+}
+.compact-disclosure-card > details {
+  width: 100%;
+}
+.compact-disclosure-card > details > summary {
+  box-sizing: border-box;
+  min-height: 68px;
+  margin: 0;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 1.28rem;
+  font-weight: 650;
+  line-height: 1.15;
+}
+.compact-disclosure-card > details > summary::-webkit-details-marker { display: none; }
+.compact-disclosure-card > details > summary::before {
+  content: "▶";
+  flex: 0 0 auto;
+  font-size: .72em;
+  transform-origin: center;
+  transition: transform .15s ease;
+}
+.compact-disclosure-card > details[open] > summary::before { transform: rotate(90deg); }
+.compact-disclosure-card > details > summary h2 {
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+}
+.compact-disclosure-card #totalSlices {
+  margin-left: auto;
+  font-size: .98rem;
+}
+.compact-disclosure-card > details[open] > summary {
+  border-bottom: 1px solid var(--soft-line);
+  margin-bottom: 0;
+}
+.compact-disclosure-card #movieList,
+.tracked-tv-card.compact-disclosure-card > details > :not(summary),
+.connection-card.compact-disclosure-card > details > :not(summary) {
+  margin-left: 19px;
+  margin-right: 19px;
+}
+.compact-disclosure-card #movieList { padding-bottom: 7px; }
+.tracked-tv-card.compact-disclosure-card > details > :last-child,
+.connection-card.compact-disclosure-card > details > :last-child { margin-bottom: 19px; }
+
+@media (max-width: 520px) {
+  .list-card.compact-disclosure-card,
+  .tv-card.compact-disclosure-card {
+    padding: 0;
+    border-radius: 25px;
+  }
+  .compact-disclosure-card > details > summary {
+    min-height: 64px;
+    padding: 16px 18px;
+    font-size: 1.22rem;
+  }
+  .compact-disclosure-card #totalSlices { font-size: .94rem; }
+}
