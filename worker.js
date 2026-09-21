@@ -716,9 +716,25 @@ async function discover(date, shows, env) {
       tvdbId && env?.TVDB_API_KEY && !tvdbResult.failed ? "tvdb" : null
     ].filter(Boolean);
     const positiveProviders = Object.entries(normalized).filter(([, items]) => Array.isArray(items) && items.length);
-    const loneAgainstThree = positiveProviders.length === 1 && configuredSuccessful.length >= 4;
-    const reconciled = loneAgainstThree ? [] : reconcileProviderEpisodes(normalized);
-    for (const ep of reconciled) episodes.push(ep);
+    const successfulPositiveNames = new Set(positiveProviders.map(([name]) => name));
+    const explicitNegativeCount = configuredSuccessful.filter(name => !successfulPositiveNames.has(name)).length;
+    // Confidence rule: one positive provider loses when at least one other configured
+    // provider successfully checked the same date and explicitly found nothing.
+    // Failed/unavailable providers are excluded, so a true lone source can still fill
+    // a gap when nobody else successfully answered.
+    const unsupportedLonePositive = positiveProviders.length === 1 && explicitNegativeCount >= 1;
+    const reconciled = unsupportedLonePositive ? [] : reconcileProviderEpisodes(normalized);
+    for (const ep of reconciled) {
+      const matchingProviders = positiveProviders.filter(([, items]) =>
+        items.some(item => episodeSignature(item) === episodeSignature(ep))
+      ).map(([name]) => name);
+      episodes.push({
+        ...ep,
+        _providerSupport: matchingProviders.length,
+        _successfulProviders: configuredSuccessful.length,
+        _explicitNegatives: explicitNegativeCount
+      });
+    }
 
     // A batch can occasionally return only one provider's stale numbering even though
     // another configured provider has the correct episode when the show is queried
