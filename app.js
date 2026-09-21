@@ -1705,3 +1705,57 @@ if ("serviceWorker" in navigator) {
     } catch {}
   });
 }
+
+
+// v0.2.36 diagnostic: in-app pull-to-refresh for installed/mobile web app.
+// This deliberately performs a real page reload only. It does NOT start another
+// TV discovery pass, so a refresh cannot accidentally add another five-minute check.
+(() => {
+  const threshold = 78;
+  let startY = null;
+  let pulling = false;
+  let armed = false;
+  const indicator = document.createElement("div");
+  indicator.className = "pull-refresh-indicator";
+  indicator.textContent = "Pull to refresh";
+  document.body.appendChild(indicator);
+
+  const reset = () => {
+    startY = null; pulling = false; armed = false;
+    indicator.classList.remove("visible", "armed");
+    indicator.style.transform = "";
+    indicator.textContent = "Pull to refresh";
+  };
+
+  document.addEventListener("touchstart", event => {
+    if (window.scrollY > 0 || event.touches.length !== 1) return;
+    startY = event.touches[0].clientY;
+    pulling = true;
+  }, { passive: true });
+
+  document.addEventListener("touchmove", event => {
+    if (!pulling || startY == null || window.scrollY > 0) return;
+    const dy = Math.max(0, event.touches[0].clientY - startY);
+    if (dy < 8) return;
+    indicator.classList.add("visible");
+    indicator.style.transform = `translate(-50%, ${Math.min(54, dy * .45)}px)`;
+    armed = dy >= threshold;
+    indicator.classList.toggle("armed", armed);
+    indicator.textContent = armed ? "Release to refresh" : "Pull to refresh";
+  }, { passive: true });
+
+  document.addEventListener("touchend", () => {
+    if (!pulling) return;
+    if (armed) {
+      indicator.textContent = "Refreshing…";
+      indicator.classList.add("visible");
+      // Reload the current document. Versioned assets in index.html then fetch the
+      // current build rather than intentionally reusing an old app.js URL.
+      window.location.reload();
+      return;
+    }
+    reset();
+  }, { passive: true });
+
+  document.addEventListener("touchcancel", reset, { passive: true });
+})();
