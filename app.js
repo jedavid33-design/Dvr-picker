@@ -1590,13 +1590,38 @@ async function discoverYesterday({ automatic = false } = {}) {
       const prev = earliestByEpisode.get(key);
       if (!prev || ep.airdate < prev) earliestByEpisode.set(key, ep.airdate);
     }
+    // Also reconcile same-show adjacent-date ghosts even when providers use incompatible
+    // season/episode numbering (e.g. Dateline S34/E35 vs S2026/E24). Prefer an earlier
+    // result only when it has stronger provider support than the later result.
+    const earliestStrongByShow = new Map();
+    for (const ep of rollingEpisodes) {
+      const support = Number(ep._providerSupport || 0);
+      if (support < 2) continue;
+      const key = normalizeTrackedName(ep.show || ep.trackedTitle);
+      const prev = earliestStrongByShow.get(key);
+      if (!prev || ep.airdate < prev.airdate) earliestStrongByShow.set(key, { airdate: ep.airdate, support });
+    }
+
     const checkedDates = new Set(dates);
     discoveries = discoveries.filter(item => {
       if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
       if (!Number.isFinite(Number(item.season)) || !Number.isFinite(Number(item.number))) return true;
       const key = [normalizeTrackedName(item.show || item.trackedTitle), Number(item.season), Number(item.number)].join("|");
       const earliestDate = earliestByEpisode.get(key);
-      return !earliestDate || item.airdate <= earliestDate;
+      if (earliestDate && item.airdate > earliestDate) return false;
+
+      const showKey = normalizeTrackedName(item.show || item.trackedTitle);
+      const earlierStrong = earliestStrongByShow.get(showKey);
+      const runItem = rollingEpisodes.find(ep =>
+        ep.airdate === item.airdate &&
+        normalizeTrackedName(ep.show || ep.trackedTitle) === showKey &&
+        Number(ep.season) === Number(item.season) &&
+        Number(ep.number) === Number(item.number)
+      );
+      if (earlierStrong && earlierStrong.airdate < item.airdate && Number(runItem?._providerSupport || 0) < earlierStrong.support) {
+        return false;
+      }
+      return true;
     });
     saveDiscoveries();
     renderTrackedShows();
