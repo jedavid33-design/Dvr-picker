@@ -11,9 +11,9 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.29";
+const VERSION = "0.2.30";
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.29";
+const UA = "DVR-Wheel/0.2.30";
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -718,12 +718,11 @@ async function discover(date, shows, env) {
     const positiveProviders = Object.entries(normalized).filter(([, items]) => Array.isArray(items) && items.length);
     const successfulPositiveNames = new Set(positiveProviders.map(([name]) => name));
     const explicitNegativeCount = configuredSuccessful.filter(name => !successfulPositiveNames.has(name)).length;
-    // Confidence rule: one positive provider loses when at least one other configured
-    // provider successfully checked the same date and explicitly found nothing.
-    // Failed/unavailable providers are excluded, so a true lone source can still fill
-    // a gap when nobody else successfully answered.
-    const unsupportedLonePositive = positiveProviders.length === 1 && explicitNegativeCount >= 1;
-    const reconciled = unsupportedLonePositive ? [] : reconcileProviderEpisodes(normalized);
+    // A provider explicitly returning a dated episode is positive evidence. Empty
+    // results from other databases are not evidence that the broadcast did not exist.
+    // This matters especially for daily/near-daily shows whose databases update at
+    // different speeds (Jeopardy!, Wheel of Fortune, Big Brother).
+    const reconciled = reconcileProviderEpisodes(normalized);
     for (const ep of reconciled) {
       const matchingProviders = positiveProviders.filter(([, items]) =>
         items.some(item => episodeSignature(item) === episodeSignature(ep))
@@ -746,12 +745,21 @@ async function discover(date, shows, env) {
     }
     const providerDisagreement = providerSignatures.size > 1;
 
-    // Isolated retries are expensive. Retry only when successful providers actually
-    // disagree about the episode identity. A single provider timeout/failure is not
-    // enough evidence to retry the show: the remaining successful provider results are
-    // still reconciled normally. This prevents transient provider failures from turning
-    // a seven-batch date check into 15–20 sequential single-show requests.
-    if (providerDisagreement) retryShows.push(title);
+    // Isolated retries are expensive. Most disagreements already have a deterministic
+    // winner in reconcileProviderEpisodes (TVDB > TMDB > TVmaze > EpisoDate). Retry
+    // only when the top competing signatures have exactly equal provider weight.
+    if (providerDisagreement) {
+      const sourceWeight = { tvdb: 4, tmdb: 3, tvmaze: 2, episodate: 1 };
+      const weights = new Map();
+      for (const [source, items] of Object.entries(normalized)) {
+        for (const ep of items || []) {
+          const sig = episodeSignature(ep);
+          weights.set(sig, (weights.get(sig) || 0) + (sourceWeight[source] || 0));
+        }
+      }
+      const ranked = [...weights.values()].sort((a,b) => b-a);
+      if (ranked.length > 1 && ranked[0] === ranked[1]) retryShows.push(title);
+    }
 
     resolvedShows.push({
       title,
