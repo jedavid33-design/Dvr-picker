@@ -1577,6 +1577,32 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
       const { key, payload, ms } = result.value;
       const isolatedEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
       noteIsolatedVerification(key, date, isolatedEpisodes.length > 0);
+
+      // One-source ghosts: an isolated endpoint can surface a stale provider record
+      // even when the verified rolling discovery found no broadcast for this show/date.
+      // Count provider matches from the diagnostic/provider payload when available.
+      const providerRows = Array.isArray(payload.providers) ? payload.providers :
+        (Array.isArray(payload.providerResults) ? payload.providerResults : []);
+      const positiveProviders = providerRows.filter(row =>
+        row && (row.episode || row.match || row.matched === true)
+      ).length;
+      const normalHasBroadcast = allEpisodes.some(ep =>
+        ep?.airdate === date &&
+        normalizeTrackedName(ep.show || ep.trackedTitle) === key
+      );
+      if (isolatedEpisodes.length && positiveProviders === 1 && !normalHasBroadcast) {
+        const ghosts = new Set(isolatedEpisodes.map(ep =>
+          episodeFingerprint(ep.show || ep.trackedTitle, ep.season, ep.number, ep.airdate, ep.title)
+        ));
+        discoveries = discoveries.filter(item =>
+          item.status !== "pending" ||
+          item.kind === "series-candidate" ||
+          !ghosts.has(episodeFingerprint(item.show || item.trackedTitle, item.season, item.number, item.airdate, item.title))
+        );
+        saveDiscoveries();
+        continue;
+      }
+
       if (!isolatedEpisodes.length) continue;
 
       // Replace only this show's batch result. A failed/empty isolated verification
