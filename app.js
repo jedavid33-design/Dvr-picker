@@ -57,6 +57,7 @@ const saveWorkerBtn = document.getElementById("saveWorkerBtn");
 const debugShowSelect = document.getElementById("debugShowSelect");
 const debugDateInput = document.getElementById("debugDateInput");
 const runTvDebugBtn = document.getElementById("runTvDebugBtn");
+const copyTvDebugBtn = document.getElementById("copyTvDebugBtn");
 const tvDebugOutput = document.getElementById("tvDebugOutput");
 const workerStatus = document.getElementById("workerStatus");
 const franchiseCandidateList = document.getElementById("franchiseCandidateList");
@@ -67,6 +68,37 @@ let discoveries = loadJsonArray(discoveriesStorageKey);
 let tvSearchBusy = false;
 let weightMode = localStorage.getItem(weightModeStorageKey) === "auto" ? "auto" : "manual";
 const tvRollingTraceStorageKey = "dvrPicker.tvRollingTrace.v1";
+const isolatedMissStorageKey = "dvrPicker.isolatedMisses.v1";
+
+function loadIsolatedMisses() {
+  try { return JSON.parse(localStorage.getItem(isolatedMissStorageKey) || "{}") || {}; }
+  catch { return {}; }
+}
+function saveIsolatedMisses(value) {
+  try { localStorage.setItem(isolatedMissStorageKey, JSON.stringify(value)); } catch {}
+}
+function isolatedMissKey(showKey, date) { return `${showKey}|${date}`; }
+function noteIsolatedVerification(showKey, date, foundEpisode) {
+  const misses = loadIsolatedMisses();
+  const key = isolatedMissKey(showKey, date);
+  if (foundEpisode) {
+    delete misses[key];
+    saveIsolatedMisses(misses);
+    return;
+  }
+  misses[key] = Math.min(2, Number(misses[key] || 0) + 1);
+  saveIsolatedMisses(misses);
+  if (misses[key] < 2) return;
+
+  // Two consecutive successful isolated checks with no episode are enough to
+  // clean a stale pending card. Reviewed history is deliberately untouchable.
+  discoveries = discoveries.filter(item =>
+    item.status !== "pending" ||
+    item.kind === "series-candidate" ||
+    normalizeTrackedName(item.show || item.trackedTitle) !== showKey ||
+    item.airdate !== date
+  );
+}
 
 function writeRollingTrace(lines) {
   try { localStorage.setItem(tvRollingTraceStorageKey, JSON.stringify(lines.slice(-80))); } catch {}
@@ -1551,6 +1583,7 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
       if (result.status !== "fulfilled") continue;
       const { key, payload, ms } = result.value;
       const isolatedEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
+      noteIsolatedVerification(key, date, isolatedEpisodes.length > 0);
       if (!isolatedEpisodes.length) continue;
 
       // Replace only this show's batch result. A failed/empty isolated verification
@@ -1857,6 +1890,23 @@ function initTvDiscovery() {
     if (event.key === "Enter") searchTrackedShow();
   });
   saveWorkerBtn.onclick = saveAndTestWorker;
+  if (copyTvDebugBtn) copyTvDebugBtn.onclick = async () => {
+    const text = tvDebugOutput?.textContent || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const old = copyTvDebugBtn.textContent;
+      copyTvDebugBtn.textContent = "Copied!";
+      setTimeout(() => { copyTvDebugBtn.textContent = old; }, 1200);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(tvDebugOutput);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copyTvDebugBtn.textContent = "Select + Copy";
+    }
+  };
   if (debugDateInput && !debugDateInput.value) debugDateInput.value = yesterdayString();
   refreshDebugShowOptions();
 
