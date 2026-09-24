@@ -1521,6 +1521,51 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     }
     if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
   }
+
+  // These high-frequency shows have repeatedly produced degraded batch results while
+  // returning correct data when queried alone. Verify them independently after the
+  // fast batch pass, then let that isolated result replace the batch result for the
+  // same show/date. Run all verifications concurrently so the accuracy fix does not
+  // bring back the old multi-minute latency.
+  const isolatedVerifyNames = new Set([
+    "big brother",
+    "jeopardy",
+    "wheel of fortune"
+  ]);
+  const verifyShows = trackedShows.filter(show =>
+    isolatedVerifyNames.has(normalizeTrackedName(show.title || show.canonicalName))
+  );
+  if (verifyShows.length) {
+    const verifyJobs = verifyShows.map(async show => {
+      const key = normalizeTrackedName(show.title || show.canonicalName);
+      const started = performance.now();
+      const payload = await workerFetch("/api/discover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ date, maxAirdate, shows: [show] })
+      });
+      return { key, payload, ms: Math.round(performance.now() - started) };
+    });
+    const verified = await Promise.allSettled(verifyJobs);
+    for (const result of verified) {
+      if (result.status !== "fulfilled") continue;
+      const { key, payload, ms } = result.value;
+      const isolatedEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
+      if (!isolatedEpisodes.length) continue;
+
+      // Replace only this show's batch result. A failed/empty isolated verification
+      // does not delete a previously found broadcast.
+      for (let j = allEpisodes.length - 1; j >= 0; j--) {
+        const ep = allEpisodes[j];
+        if (ep?.airdate === date && normalizeTrackedName(ep.show || ep.trackedTitle) === key) {
+          allEpisodes.splice(j, 1);
+        }
+      }
+      allEpisodes.push(...isolatedEpisodes);
+      if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
+      diag.retryMs.push(ms);
+    }
+  }
   // A retry can duplicate an episode already returned by its batch. Collapse exact
   // show/S/E/date duplicates before merging into local discovery state.
   const uniqueEpisodes = [];
