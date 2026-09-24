@@ -88,16 +88,9 @@ function noteIsolatedVerification(showKey, date, foundEpisode) {
   }
   misses[key] = Math.min(2, Number(misses[key] || 0) + 1);
   saveIsolatedMisses(misses);
-  if (misses[key] < 2) return;
-
-  // Two consecutive successful isolated checks with no episode are enough to
-  // clean a stale pending card. Reviewed history is deliberately untouchable.
-  discoveries = discoveries.filter(item =>
-    item.status !== "pending" ||
-    item.kind === "series-candidate" ||
-    normalizeTrackedName(item.show || item.trackedTitle) !== showKey ||
-    item.airdate !== date
-  );
+  // Negative isolated lookups are diagnostic only. They can be flaky and must
+  // never delete a positively discovered pending episode.
+  return;
 }
 
 function writeRollingTrace(lines) {
@@ -1876,8 +1869,27 @@ async function saveAndTestWorker() {
   }
 }
 
+function repairV0250FalseCleanup() {
+  const repairKey = "dvrPicker.repair.v0251";
+  if (localStorage.getItem(repairKey)) return;
+  const restore = [
+    { id:"tmdb:2912:7834570:43:8:2026-09-23", fp:"episode|jeopardy|43|8|2026-09-23|", show:"Jeopardy!", season:43, number:8, airdate:"2026-09-23", status:"pending", title:"Show #9623" },
+    { id:"tmdb:2778:7834557:44:8:2026-09-23", fp:"episode|wheel of fortune|44|8|2026-09-23|", show:"Wheel of Fortune", season:44, number:8, airdate:"2026-09-23", status:"pending", title:"Words With Friends" }
+  ];
+  for (const item of restore) {
+    const sameBroadcast = discoveries.some(d =>
+      normalizeTrackedName(d.show || d.trackedTitle) === normalizeTrackedName(item.show) &&
+      d.airdate === item.airdate
+    );
+    if (!sameBroadcast) discoveries.push(item);
+  }
+  saveDiscoveries();
+  localStorage.setItem(repairKey, "1");
+}
+
 function initTvDiscovery() {
   migrateOldCheckState();
+  repairV0250FalseCleanup();
   workerUrlInput.value = getWorkerUrl();
   renderTrackedShows();
   renderDiscoveries();
