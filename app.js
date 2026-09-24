@@ -1085,6 +1085,13 @@ function sameReviewedBroadcast(previous, incoming) {
   return Boolean(a && b && a === b);
 }
 
+function discoveryBroadcastKey(item) {
+  if (!item || (item.kind || "episode") !== "episode") return "";
+  const show = normalizeTrackedName(item.show || item.trackedTitle);
+  const airdate = item.airdate || "";
+  return show && airdate ? `broadcast|${show}|${airdate}` : "";
+}
+
 function discoveryFingerprint(item) {
   if (!item) return "";
   if (item.kind === "series-candidate") return `series|${normalizeTrackedName(item.show)}|${item.premiered || ""}`;
@@ -1098,79 +1105,59 @@ function discoveryFingerprint(item) {
 }
 
 function mergeDiscoveries(incoming) {
-  // Canonicalize exact episode identities first. Provider reconciliation may choose
-  // a different source ID on a later check, but show + S/E + airdate is still the
-  // same broadcast. Keep one record and preserve its review state.
-  const canonicalExisting = new Map();
-  for (const item of discoveries) {
-    const fp = discoveryFingerprint(item) || item.id;
-    const prior = canonicalExisting.get(fp);
-    if (!prior) {
-      canonicalExisting.set(fp, item);
-      continue;
-    }
-    const priorReviewed = ["added", "dismissed"].includes(prior.status);
-    const itemReviewed = ["added", "dismissed"].includes(item.status);
-    if (itemReviewed && !priorReviewed) canonicalExisting.set(fp, item);
-    else if (itemReviewed === priorReviewed && Date.parse(item.reviewedAt || 0) > Date.parse(prior.reviewedAt || 0)) canonicalExisting.set(fp, item);
-  }
-  discoveries = Array.from(canonicalExisting.values());
-
-  const byId = new Map(discoveries.map(item => [item.id, item]));
-  const byFingerprint = new Map(discoveries.map(item => [discoveryFingerprint(item), item]).filter(([key]) => key));
+  // A TV broadcast is canonically show + airdate. Provider IDs and episode numbers
+  // are metadata about that slot, not separate discoveries.
   const reviewedByBroadcast = new Map();
+  const pendingByBroadcast = new Map();
+  const other = [];
+
   for (const item of discoveries) {
-    const key = reviewedBroadcastKey(item);
-    if (key && ["added", "dismissed"].includes(item.status)) {
-      const list = reviewedByBroadcast.get(key) || [];
-      list.push(item);
-      reviewedByBroadcast.set(key, list);
+    const bkey = discoveryBroadcastKey(item);
+    if (!bkey) { other.push(item); continue; }
+    if (["added", "dismissed"].includes(item.status)) {
+      const prior = reviewedByBroadcast.get(bkey);
+      if (!prior || Date.parse(item.reviewedAt || 0) > Date.parse(prior.reviewedAt || 0)) reviewedByBroadcast.set(bkey, item);
+    } else {
+      const prior = pendingByBroadcast.get(bkey);
+      if (!prior) pendingByBroadcast.set(bkey, item);
     }
   }
 
   for (const ep of incoming || []) {
     if (!ep?.id) continue;
-    const showKey = normalizeTrackedName(ep.show || ep.trackedTitle);
-    const stalePending = [...byId.values()].find(item =>
-      !["added", "dismissed"].includes(item.status) &&
-      normalizeTrackedName(item.show || item.trackedTitle) === showKey &&
-      String(item.season ?? "") === String(ep.season ?? "") &&
-      String(item.number ?? "") === String(ep.number ?? "") &&
-      item.airdate && ep.airdate && item.airdate !== ep.airdate
-    );
-    if (stalePending) {
-      byId.delete(stalePending.id);
-      byFingerprint.delete(discoveryFingerprint(stalePending));
-    }
-    let previous = byId.get(ep.id) || byFingerprint.get(discoveryFingerprint(ep));
+    const bkey = discoveryBroadcastKey(ep);
+    if (!bkey) { other.push({ ...ep, status: ep.status || "pending" }); continue; }
 
-    // A late/stale provider can report the same broadcast date under a different
-    // episode number. If that show/date has already been reviewed, preserve the
-    // reviewed result instead of resurrecting it as a new card.
+    // Once the user reviewed this show/date, never resurrect it under a different
+    // provider ID or episode number.
+    const reviewed = reviewedByBroadcast.get(bkey);
+    if (reviewed) continue;
+
+    const previous = pendingByBroadcast.get(bkey);
     if (!previous) {
-      const candidates = reviewedByBroadcast.get(reviewedBroadcastKey(ep)) || [];
-      previous = candidates.find(item => sameReviewedBroadcast(item, ep)) || null;
+      pendingByBroadcast.set(bkey, { ...ep, status: "pending" });
+      continue;
     }
 
-    const merged = previous
-      ? { ...ep, status: previous.status, reviewedAt: previous.reviewedAt, id: previous.id || ep.id }
-      : { ...ep, status: "pending" };
-    byId.set(merged.id, merged);
-    byFingerprint.set(discoveryFingerprint(merged), merged);
-
-    const broadcastKey = reviewedBroadcastKey(merged);
-    if (broadcastKey && ["added", "dismissed"].includes(merged.status)) {
-      const list = reviewedByBroadcast.get(broadcastKey) || [];
-      if (!list.some(item => item.id === merged.id)) list.push(merged);
-      reviewedByBroadcast.set(broadcastKey, list);
-    }
+    // New evidence may improve metadata, but it updates the existing broadcast slot.
+    // Prefer stronger provider support; otherwise retain the stable identity/numbering.
+    const prevSupport = Number(previous._providerSupport || 0);
+    const nextSupport = Number(ep._providerSupport || 0);
+    const useIncoming = nextSupport > prevSupport ||
+      (nextSupport === prevSupport && previous.season == null && ep.season != null) ||
+      (nextSupport === prevSupport && previous.number == null && ep.number != null);
+    pendingByBroadcast.set(bkey, useIncoming
+      ? { ...previous, ...ep, id: previous.id || ep.id, status: "pending" }
+      : { ...ep, ...previous, status: "pending" });
   }
-  const unique = new Map();
-  for (const item of byId.values()) unique.set(discoveryFingerprint(item) || item.id, item);
-  discoveries = Array.from(unique.values()).slice(-800);
+
+  discoveries = [
+    ...other,
+    ...reviewedByBroadcast.values(),
+    ...pendingByBroadcast.values()
+  ].slice(-800);
   saveDiscoveries();
 }
-
 function migrateOldCheckState() {
   if (localStorage.getItem(lastTvEpisodeDateStorageKey)) return;
   const oldCheck = localStorage.getItem(lastTvCheckStorageKey);
@@ -1531,20 +1518,9 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   const payload = { episodes: uniqueEpisodes, resolvedShows: allResolvedShows };
   mergeDiscoveries(uniqueEpisodes);
 
-  // A completed date check is authoritative for still-pending cards on that date.
-  // Remove unsupported pending identities (for example Big Brother E32 after E37 wins),
-  // but never touch anything Julie has already added or dismissed.
-  const resolvedKeys = new Set(allResolvedShows.map(row => normalizeTrackedName(row.title || row.canonicalName)).filter(Boolean));
-  const supported = new Set(uniqueEpisodes.map(ep => discoveryFingerprint(ep)).filter(Boolean));
-  discoveries = discoveries.filter(item => {
-    if (["added", "dismissed"].includes(item.status)) return true;
-    if (item.kind === "series-candidate" || item.airdate !== date) return true;
-    const key = normalizeTrackedName(item.show || item.trackedTitle);
-    if (!resolvedKeys.has(key)) return true;
-    const keep = supported.has(discoveryFingerprint(item));
-    if (!keep) diag.pruned.push({ show: item.show || item.trackedTitle, season: item.season, number: item.number, airdate: item.airdate });
-    return keep;
-  });
+  // Do not delete an established broadcast merely because a provider omitted it
+  // on this refresh. Provider availability is intermittent. mergeDiscoveries() has
+  // already canonicalized all returned evidence into one show+airdate slot.
   saveDiscoveries();
   renderDiscoveries();
 
@@ -1713,39 +1689,37 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
       writeRollingTrace(trace);
     }
 
-    // Final reconciliation is authoritative for the completed date window.
-    // Pending cards inside the window must be supported by this run, not merely survive
-    // from an earlier run. This lets an old lone-provider ghost age out deterministically.
+    // Missing from one refresh is NOT evidence that a known broadcast vanished.
+    // Reconcile only positive conflicts observed inside this completed run.
     const checkedDates = new Set(dates);
-    const exactRunKeys = new Set();
-    const runByShow = new Map();
+    const bestByShowDate = new Map();
     for (const ep of rollingEpisodes) {
       const show = normalizeTrackedName(ep.show || ep.trackedTitle);
-      const key = [show, Number(ep.season), Number(ep.number), ep.airdate].join("|");
-      exactRunKeys.add(key);
-      if (!runByShow.has(show)) runByShow.set(show, []);
-      runByShow.get(show).push(ep);
+      const key = `${show}|${ep.airdate || ""}`;
+      const prior = bestByShowDate.get(key);
+      if (!prior || Number(ep._providerSupport || 0) > Number(prior._providerSupport || 0)) bestByShowDate.set(key, ep);
+    }
+
+    const runByShow = new Map();
+    for (const ep of bestByShowDate.values()) {
+      const show = normalizeTrackedName(ep.show || ep.trackedTitle);
+      const list = runByShow.get(show) || [];
+      list.push(ep);
+      runByShow.set(show, list);
     }
 
     discoveries = discoveries.filter(item => {
       if (item.status !== "pending" || item.kind === "series-candidate" || !checkedDates.has(item.airdate)) return true;
       const show = normalizeTrackedName(item.show || item.trackedTitle);
-      const exactKey = [show, Number(item.season), Number(item.number), item.airdate].join("|");
+      const sameShow = (runByShow.get(show) || []).slice().sort((a,b) => String(a.airdate).localeCompare(String(b.airdate)));
+      if (sameShow.length < 2) return true;
 
-      // If this completed run did not return the pending broadcast at all, remove it.
-      if (!exactRunKeys.has(exactKey)) {
-        trace.push(`final prune unsupported: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate}`);
-        return false;
-      }
-
-      // Providers sometimes describe one broadcast with incompatible numbering systems.
-      // If the same show is returned on adjacent dates, keep the earliest date in this
-      // completed window and reject later-date variants regardless of S/E notation.
-      const sameShow = runByShow.get(show) || [];
-      const earliestShowDate = sameShow.reduce((earliest, ep) =>
-        !earliest || ep.airdate < earliest ? ep.airdate : earliest, null);
-      if (earliestShowDate && item.airdate > earliestShowDate) {
-        trace.push(`final prune later-date variant: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate} → ${earliestShowDate}`);
+      const currentRun = sameShow.find(ep => ep.airdate === item.airdate);
+      const earlier = sameShow.filter(ep => ep.airdate < item.airdate)
+        .sort((a,b) => Number(b._providerSupport || 0) - Number(a._providerSupport || 0))[0];
+      if (currentRun && earlier &&
+          Number(earlier._providerSupport || 0) > Number(currentRun._providerSupport || 0)) {
+        trace.push(`final prune weaker later-date variant: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate} → ${earlier.airdate}`);
         return false;
       }
       return true;
