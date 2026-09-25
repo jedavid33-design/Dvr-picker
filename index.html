@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#e8ecef" />
   <title>What to Watch</title>
-  <link rel="stylesheet" href="styles.css?v=0.2.54">
+  <link rel="stylesheet" href="styles.css?v=0.2.55">
   <link rel="apple-touch-icon" href="icon.PNG?v=1">
 <link rel="icon" type="image/png" href="icon.PNG?v=1">
 </head>
 <body>
   <details class="build-info" aria-label="App information">
     <summary title="App information">i</summary>
-    <div class="build-info-popover">v0.2.54</div>
+    <div class="build-info-popover">v0.2.55</div>
   </details>
   <main class="app">
     <header>
@@ -34,13 +34,7 @@
       <button id="watchedBtn" disabled>Watched</button>
       <button id="undoBtn">Undo</button>
       <button id="resetBtn">Reset</button>
-      <button id="increaseAllBtn">+1 All Values</button>
-      <div class="weight-mode-control" role="group" aria-label="Wheel weighting mode">
-        <span class="weight-mode-label">Weighting</span>
-        <button id="manualWeightModeBtn" class="compact-btn weight-mode-btn active" type="button">Manual</button>
-        <button id="autoWeightModeBtn" class="compact-btn weight-mode-btn" type="button">Auto aging</button>
-      </div>
-      <p id="weightModeHint" class="tiny weight-mode-hint">Manual +1/day weighting.</p>
+      <p id="weightModeHint" class="tiny weight-mode-hint">Auto aging ×1.15/day. Dated episodes use airdate; undated items grow from their stored starting value.</p>
     </section>
 
     <section class="tv-card" id="tvDiscoveryCard">
@@ -137,6 +131,6 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=0.2.54"></script>
+  <script src="app.js?v=0.2.55"></script>
 </body>
 </html>
