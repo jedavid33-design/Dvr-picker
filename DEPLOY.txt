@@ -1,3 +1,19 @@
+DVR WHEEL v0.2.53 - DEPLOY NOTES
+
+FRONTEND
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or recalculate existing wheel entries or weights.
+- No worker change; the Cloudflare Worker does not need redeploying.
+
+v0.2.53 changes
+- Reviewed-episode guard now keys on show + S/E as well as show + airdate: an
+  added/dismissed episode can no longer resurface as a new discovery when a
+  provider reports a stale or corrected airdate for the same episode.
+- Reviewed records are indexed under every known show-name variant (tracked
+  title + provider canonical name), so provider canonical-name drift between
+  queries cannot detach a reviewed record from later discovery runs.
+
 DVR WHEEL v0.2.12 - DEPLOY NOTES
 
 FRONTEND
