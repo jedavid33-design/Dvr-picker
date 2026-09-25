@@ -1,3 +1,16 @@
+DVR WHEEL v0.2.54 - DEPLOY NOTES
+
+FRONTEND
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or recalculate existing wheel entries.
+- No worker change; the Cloudflare Worker does not need redeploying.
+
+v0.2.54 changes
+- Auto weight mode: growth is now 15% per day with no waiting period
+  (was 20% per day after a 3-day grace). Locked entries still keep their
+  manual weight in auto mode.
+
 DVR WHEEL v0.2.53 - DEPLOY NOTES
 
 FRONTEND
