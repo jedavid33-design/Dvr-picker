@@ -1703,13 +1703,19 @@ async function discoverYesterday({ automatic = false } = {}) {
     // Also reconcile same-show adjacent-date ghosts even when providers use incompatible
     // season/episode numbering (e.g. Dateline S34/E35 vs S2026/E24). Prefer an earlier
     // result only when it has stronger provider support than the later result.
+    // A different finite S/E on the earlier date is a different broadcast
+    // (daily/strip shows air distinct episodes on consecutive dates), never a
+    // misdated variant — pruning those hides real episodes every morning.
     const earliestStrongByShow = new Map();
     for (const ep of rollingEpisodes) {
       const support = Number(ep._providerSupport || 0);
       if (support < 2) continue;
       const key = normalizeTrackedName(ep.show || ep.trackedTitle);
       const prev = earliestStrongByShow.get(key);
-      if (!prev || ep.airdate < prev.airdate) earliestStrongByShow.set(key, { airdate: ep.airdate, support });
+      if (!prev || ep.airdate < prev.airdate) earliestStrongByShow.set(key, {
+        airdate: ep.airdate, support,
+        season: Number(ep.season), number: Number(ep.number)
+      });
     }
 
     const checkedDates = new Set(dates);
@@ -1728,7 +1734,10 @@ async function discoverYesterday({ automatic = false } = {}) {
         Number(ep.season) === Number(item.season) &&
         Number(ep.number) === Number(item.number)
       );
-      if (earlierStrong && earlierStrong.airdate < item.airdate && Number(runItem?._providerSupport || 0) < earlierStrong.support) {
+      const sameBroadcastAsEarlier = !earlierStrong ||
+        !Number.isFinite(Number(earlierStrong.season)) || !Number.isFinite(Number(earlierStrong.number)) ||
+        (Number(earlierStrong.season) === Number(item.season) && Number(earlierStrong.number) === Number(item.number));
+      if (sameBroadcastAsEarlier && earlierStrong && earlierStrong.airdate < item.airdate && Number(runItem?._providerSupport || 0) < earlierStrong.support) {
         return false;
       }
       return true;
@@ -1836,8 +1845,16 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
       if (sameShow.length < 2) return true;
 
       const currentRun = sameShow.find(ep => ep.airdate === item.airdate);
-      const earlier = sameShow.filter(ep => ep.airdate < item.airdate)
-        .sort((a,b) => Number(b._providerSupport || 0) - Number(a._providerSupport || 0))[0];
+      // Only a same-broadcast (same S/E) variant on an earlier date is a genuine
+      // conflict. Daily shows legitimately have different episodes on consecutive
+      // dates; pruning those deletes real broadcasts (e.g. morning checks where
+      // the newest episode still has the weakest provider support).
+      const earlier = sameShow.filter(ep =>
+        ep.airdate < item.airdate &&
+        Number.isFinite(Number(ep.season)) && Number.isFinite(Number(ep.number)) &&
+        Number.isFinite(Number(item.season)) && Number.isFinite(Number(item.number)) &&
+        Number(ep.season) === Number(item.season) && Number(ep.number) === Number(item.number)
+      ).sort((a,b) => Number(b._providerSupport || 0) - Number(a._providerSupport || 0))[0];
       if (currentRun && earlier &&
           Number(earlier._providerSupport || 0) > Number(currentRun._providerSupport || 0)) {
         trace.push(`final prune weaker later-date variant: ${item.show || item.trackedTitle} ${episodeNumberLabel(item)} ${item.airdate} → ${earlier.airdate}`);
