@@ -1,3 +1,17 @@
+DVR WHEEL v0.2.55 - DEPLOY NOTES
+
+FRONTEND
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or recalculate existing wheel entries.
+- No worker change; the Cloudflare Worker does not need redeploying.
+
+v0.2.55 changes
+- Removed the manual weighting option. Auto aging (x1.15/day, no grace period)
+  is now the only weighting mode. The Manual/Auto toggle, the "+1 All Values"
+  button, and their supporting code are gone. Locked entries still keep their
+  fixed manual weight.
+
 DVR WHEEL v0.2.54 - DEPLOY NOTES
 
 FRONTEND
