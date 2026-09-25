@@ -1,3 +1,20 @@
+DVR WHEEL v0.2.56 - DEPLOY NOTES
+
+FRONTEND
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or recalculate existing wheel entries or weights.
+- No worker change; the Cloudflare Worker does not need redeploying.
+
+v0.2.56 changes
+- Fixed the "have to refresh" bug for daily shows (Jeopardy!, Wheel of Fortune).
+  The final prune step compared provider support across dates by show name only,
+  so a morning check deleted the newest episode whenever older dates had stronger
+  provider support — even though those were different broadcasts. Both prune
+  filters (automatic open check and manual "Check yesterday") now only prune
+  when the earlier-date result is the same season/episode, i.e. a genuine
+  airdate conflict. Verified with a 9-scenario regression test.
+
 DVR WHEEL v0.2.55 - DEPLOY NOTES
 
 FRONTEND
