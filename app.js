@@ -1077,14 +1077,6 @@ function normalizeTrackedName(value) {
   return String(value || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function reviewedBroadcastKey(item) {
-  if (!item || (item.kind && item.kind !== "episode")) return "";
-  const show = normalizeTrackedName(item.show || item.trackedTitle);
-  const airdate = /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") ? item.airdate : "";
-  if (!show || !airdate) return "";
-  return `broadcast|${show}|${airdate}`;
-}
-
 function isGenericEpisodeTitle(value) {
   const title = normalizeTrackedName(value);
   return !title || /^episode(?: \d+)?$/.test(title) || /^ep(?:isode)? \d+$/.test(title);
@@ -1093,7 +1085,15 @@ function isGenericEpisodeTitle(value) {
 function sameReviewedBroadcast(previous, incoming) {
   if (!previous || !incoming) return false;
   if (!previous.status || !["added", "dismissed"].includes(previous.status)) return false;
-  if (reviewedBroadcastKey(previous) !== reviewedBroadcastKey(incoming)) return false;
+
+  // Same show + S/E is the same episode even when a provider reports a stale or
+  // corrected airdate. Mirrors the worker's canonical episode identity.
+  const prevEpisodeKeys = new Set(discoveryEpisodeIdentityKeys(previous));
+  if (prevEpisodeKeys.size && discoveryEpisodeIdentityKeys(incoming).some(k => prevEpisodeKeys.has(k))) return true;
+
+  const prevBroadcastKeys = new Set(discoveryBroadcastKeys(previous));
+  if (!prevBroadcastKeys.size) return false;
+  if (!discoveryBroadcastKeys(incoming).some(k => prevBroadcastKeys.has(k))) return false;
 
   // Exact S/E is obviously the same broadcast.
   if (String(previous.season ?? "") === String(incoming.season ?? "") &&
@@ -1110,11 +1110,36 @@ function sameReviewedBroadcast(previous, incoming) {
   return Boolean(a && b && a === b);
 }
 
-function discoveryBroadcastKey(item) {
-  if (!item || (item.kind || "episode") !== "episode") return "";
-  const show = normalizeTrackedName(item.show || item.trackedTitle);
+// A show's identity for dedupe: every normalized name variant we have for it.
+// The provider canonical name can drift between queries (whichever provider
+// answers first wins), while the user's tracked title is stable. Indexing both
+// keeps reviewed records matching regardless of which name a run returns, and
+// stays compatible with records stored before trackedTitle existed.
+function discoveryShowKeys(item) {
+  const keys = [];
+  for (const name of [item?.trackedTitle, item?.show]) {
+    const k = normalizeTrackedName(name);
+    if (k && !keys.includes(k)) keys.push(k);
+  }
+  return keys;
+}
+
+function discoveryBroadcastKeys(item) {
+  if (!item || (item.kind || "episode") !== "episode") return [];
   const airdate = item.airdate || "";
-  return show && airdate ? `broadcast|${show}|${airdate}` : "";
+  if (!airdate) return [];
+  return discoveryShowKeys(item).map(sk => `broadcast|${sk}|${airdate}`);
+}
+
+// S/E is the worker's canonical episode identity (episodeSignature). A provider
+// reporting a stale or corrected airdate for the same S/E must not resurrect an
+// already-reviewed episode as a new discovery.
+function discoveryEpisodeIdentityKeys(item) {
+  if (!item || (item.kind || "episode") !== "episode") return [];
+  const s = Number(item.season);
+  const n = Number(item.number);
+  if (!Number.isFinite(s) || !Number.isFinite(n)) return [];
+  return discoveryShowKeys(item).map(sk => `episode|${sk}|${s}|${n}`);
 }
 
 function discoveryFingerprint(item) {
@@ -1133,34 +1158,50 @@ function mergeDiscoveries(incoming) {
   // A TV broadcast is canonically show + airdate. Provider IDs and episode numbers
   // are metadata about that slot, not separate discoveries.
   const reviewedByBroadcast = new Map();
+  const reviewedByEpisode = new Map();
   const pendingByBroadcast = new Map();
   const other = [];
 
+  const indexReviewed = (map, keys, item) => {
+    for (const key of keys) {
+      const prior = map.get(key);
+      if (!prior || Date.parse(item.reviewedAt || 0) > Date.parse(prior.reviewedAt || 0)) map.set(key, item);
+    }
+  };
+
   for (const item of discoveries) {
-    const bkey = discoveryBroadcastKey(item);
-    if (!bkey) { other.push(item); continue; }
+    const bkeys = discoveryBroadcastKeys(item);
+    const ekeys = discoveryEpisodeIdentityKeys(item);
+    if (!bkeys.length && !ekeys.length) { other.push(item); continue; }
     if (["added", "dismissed"].includes(item.status)) {
-      const prior = reviewedByBroadcast.get(bkey);
-      if (!prior || Date.parse(item.reviewedAt || 0) > Date.parse(prior.reviewedAt || 0)) reviewedByBroadcast.set(bkey, item);
-    } else {
-      const prior = pendingByBroadcast.get(bkey);
-      if (!prior) pendingByBroadcast.set(bkey, item);
+      // Index under every name variant so provider canonical-name drift cannot
+      // detach a reviewed record from later runs.
+      indexReviewed(reviewedByBroadcast, bkeys, item);
+      indexReviewed(reviewedByEpisode, ekeys, item);
+    } else if (bkeys.length && !bkeys.some(k => pendingByBroadcast.has(k))) {
+      for (const k of bkeys) pendingByBroadcast.set(k, item);
+    } else if (!bkeys.length) {
+      other.push(item);
     }
   }
 
   for (const ep of incoming || []) {
     if (!ep?.id) continue;
-    const bkey = discoveryBroadcastKey(ep);
-    if (!bkey) { other.push({ ...ep, status: ep.status || "pending" }); continue; }
+    const bkeys = discoveryBroadcastKeys(ep);
+    const ekeys = discoveryEpisodeIdentityKeys(ep);
+    if (!bkeys.length && !ekeys.length) { other.push({ ...ep, status: ep.status || "pending" }); continue; }
 
     // Once the user reviewed this show/date, never resurrect it under a different
     // provider ID or episode number.
-    const reviewed = reviewedByBroadcast.get(bkey);
-    if (reviewed) continue;
+    if (bkeys.some(k => reviewedByBroadcast.has(k))) continue;
+    // Once the user added/dismissed an episode, never re-offer the same S/E under
+    // a stale or corrected airdate.
+    if (ekeys.some(k => reviewedByEpisode.has(k))) continue;
 
-    const previous = pendingByBroadcast.get(bkey);
+    const previous = bkeys.map(k => pendingByBroadcast.get(k)).find(Boolean);
     if (!previous) {
-      pendingByBroadcast.set(bkey, { ...ep, status: "pending" });
+      const item = { ...ep, status: "pending" };
+      for (const k of bkeys) pendingByBroadcast.set(k, item);
       continue;
     }
 
@@ -1176,16 +1217,29 @@ function mergeDiscoveries(incoming) {
       (nextSupport === prevSupport && metadataChanged) ||
       (nextSupport === prevSupport && previous.season == null && ep.season != null) ||
       (nextSupport === prevSupport && previous.number == null && ep.number != null);
-    pendingByBroadcast.set(bkey, useIncoming
+    const merged = useIncoming
       ? { ...previous, ...ep, id: previous.id || ep.id, status: "pending" }
-      : { ...ep, ...previous, status: "pending" });
+      : { ...ep, ...previous, status: "pending" };
+    // Refresh every key still pointing at the previous object so older name
+    // variants converge onto the merged record.
+    for (const [k, v] of pendingByBroadcast) if (v === previous) pendingByBroadcast.set(k, merged);
   }
 
+  // One item can be indexed under several keys (name variants, broadcast + S/E).
+  const seenIds = new Set();
   discoveries = [
     ...other,
     ...reviewedByBroadcast.values(),
+    ...reviewedByEpisode.values(),
     ...pendingByBroadcast.values()
-  ].slice(-800);
+  ].filter(item => {
+    const id = item && item.id;
+    if (id) {
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+    }
+    return true;
+  }).slice(-800);
   saveDiscoveries();
 }
 function migrateOldCheckState() {
