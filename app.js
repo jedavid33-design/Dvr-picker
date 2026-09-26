@@ -34,7 +34,6 @@ const totalSlices = document.getElementById("totalSlices");
 const newMovie = document.getElementById("newMovie");
 const addBtn = document.getElementById("addBtn");
 const dialog = document.getElementById("confirmDialog");
-const weightModeHint = document.getElementById("weightModeHint");
 const checkTvBtn = document.getElementById("checkTvBtn");
 const discoveryList = document.getElementById("discoveryList");
 const tvDiscoveryStatus = document.getElementById("tvDiscoveryStatus");
@@ -535,7 +534,6 @@ if (restoredSpin) {
 }
 
 render();
-if (weightModeHint) weightModeHint.textContent = "Auto aging ×1.15/day. Dated episodes use airdate; undated items grow from their stored starting value.";
 document.fonts?.ready.then(drawWheel);
 
 
