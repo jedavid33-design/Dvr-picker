@@ -1,3 +1,21 @@
+DVR WHEEL v0.2.58 - DEPLOY NOTES
+
+FRONTEND ONLY (no worker redeploy; worker stays at v0.2.57)
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or reweight anything.
+
+v0.2.58 changes
+- Fixed: the Spin button turned white with an invisible label after being
+  tapped. Cause: the generic button:hover wash (rgba(255,255,255,.92)) sticks
+  on touch screens after tap, painting over the purple .primary gradient while
+  the white label stayed white. The hover wash is now scoped to
+  @media (hover:hover) and (pointer:fine), so touch devices never get it.
+  Tap feedback on touch still comes from the :active scale.
+- Removed: the "Auto aging x1.15/day..." explainer line under the
+  Watched/Undo/Reset buttons (weightModeHint element, its JS references,
+  and its CSS rule). Auto aging itself is unchanged.
+
 DVR WHEEL v0.2.57 - DEPLOY NOTES
 
 WORKER (deployed 2026-09-26 via Cloudflare API multipart upload)
