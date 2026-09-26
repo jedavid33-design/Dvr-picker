@@ -1,3 +1,25 @@
+DVR WHEEL v0.2.57 - DEPLOY NOTES
+
+WORKER (deployed 2026-09-26 via Cloudflare API multipart upload)
+- Redeploy the worker script: dvr-wheel-worker. No frontend change.
+- Existing wheel data and discoveries are untouched; the next rolling check
+  refreshes the 20/20 pending card in place (same broadcast key).
+
+v0.2.57 changes
+- Placeholder title coalescing in reconcileProviderEpisodes: when the winning
+  provider record carries a stub title ("TBA", "TBD", "Untitled", "Episode N"),
+  the title is filled from the best non-placeholder title in the same S/E
+  bucket instead of the placeholder clobbering it. (20/20 2026-09-25: TVDB's
+  "TBA" stub no longer hides TMDB's "The Salem Strangler".)
+- Per-show season-number overrides (SHOW_SEASON_OFFSETS): TVDB and TMDB both
+  number 20/20's 2026-27 season as 50, but ABC officially promoted it as
+  Season 49 ("Season 49 Premiere", @ABC2020 2026-09-22). 20/20 now gets a -1
+  season offset. Applies only to plausible season numbers (< 1000), so
+  TVmaze's year-based seasons (e.g. 2026) pass through untouched. Remove the
+  entry if the providers correct their data.
+- Added worker-regression.test.mjs (node): 30 assertions covering the 20/20
+  scenario, placeholder detection, and offset edge cases. All pass.
+
 DVR WHEEL v0.2.56 - DEPLOY NOTES
 
 FRONTEND
