@@ -11,7 +11,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.30";
+const VERSION = "0.2.57";
 const TVMAZE = "https://api.tvmaze.com";
 const UA = "DVR-Wheel/0.2.30";
 const EPISODATE = "https://www.episodate.com/api";
@@ -233,13 +233,14 @@ async function tmdbEpisodesByDate(seriesId, date, env) {
 }
 
 function normalizeTmdbEpisode(ep, showName, trackedTitle, seriesId) {
+  const season = applyShowSeasonOffset(ep.season_number, showName);
   return {
-    id: `tmdb:${seriesId}:${ep.id || ""}:${ep.season_number ?? ""}:${ep.episode_number ?? ""}:${ep.air_date || ""}`,
+    id: `tmdb:${seriesId}:${ep.id || ""}:${season ?? ""}:${ep.episode_number ?? ""}:${ep.air_date || ""}`,
     kind: "episode",
     source: "tmdb",
     trackedTitle,
     show: showName || trackedTitle,
-    season: ep.season_number ?? null,
+    season: season ?? null,
     number: ep.episode_number ?? null,
     title: ep.name || null,
     airdate: String(ep.air_date || "").slice(0, 10) || null
@@ -335,13 +336,14 @@ async function tvdbEpisodesByDate(seriesId, date, env) {
 }
 
 function normalizeTvdbEpisode(ep, showName, trackedTitle, seriesId) {
+  const season = applyShowSeasonOffset(ep.seasonNumber ?? ep.season, showName);
   return {
-    id: `tvdb:${ep.id || seriesId}:${ep.seasonNumber ?? ep.season ?? ""}:${ep.number ?? ep.episodeNumber ?? ""}:${ep.aired || ep.airDate || ""}`,
+    id: `tvdb:${ep.id || seriesId}:${season ?? ""}:${ep.number ?? ep.episodeNumber ?? ""}:${ep.aired || ep.airDate || ""}`,
     kind: "episode",
     source: "tvdb",
     trackedTitle,
     show: showName || trackedTitle,
-    season: ep.seasonNumber ?? ep.season ?? null,
+    season: season ?? null,
     number: ep.number ?? ep.episodeNumber ?? null,
     title: ep.name || null,
     airdate: String(ep.aired || ep.airDate || ep.firstAired || "").slice(0, 10) || null
@@ -504,13 +506,14 @@ async function episodateEpisodesByDate(showId, date) {
 }
 
 function normalizeEpisodateEpisode(ep, showName, trackedTitle, showId) {
+  const season = applyShowSeasonOffset(ep.season, showName);
   return {
-    id: `episodate:${showId}:${ep.season ?? ""}:${ep.episode ?? ""}:${ep.air_date || ""}`,
+    id: `episodate:${showId}:${season ?? ""}:${ep.episode ?? ""}:${ep.air_date || ""}`,
     kind: "episode",
     source: "episodate",
     trackedTitle,
     show: showName || trackedTitle,
-    season: ep.season ?? null,
+    season: season ?? null,
     number: ep.episode ?? null,
     title: ep.name || null,
     airdate: String(ep.air_date || "").slice(0, 10) || null
@@ -775,6 +778,37 @@ async function discover(date, shows, env) {
   return { episodes: dedupeEpisodes(episodes), resolvedShows, retryShows };
 }
 
+// Provider season-numbering corrections. Both TVDB and TMDB number 20/20's
+// 2026-27 season as 50, but ABC officially promoted it as Season 49
+// ("Season 49 Premiere", @ABC2020 2026-09-22). Offsets are keyed by normalized
+// show name and only apply to plausible season numbers (< 1000), so TVmaze's
+// year-based seasons (e.g. 2026) pass through untouched. Remove an entry if
+// the providers correct their data.
+const SHOW_SEASON_OFFSETS = {
+  "20 20": -1
+};
+
+function applyShowSeasonOffset(season, showName) {
+  if (season === null || season === undefined || season === "") return season;
+  const offset = SHOW_SEASON_OFFSETS[normalize(showName)];
+  const s = Number(season);
+  if (!offset || !Number.isFinite(s) || s < 0 || s >= 1000) return season;
+  return s + offset;
+}
+
+// A provider sometimes stores a stub record whose title is a placeholder
+// ("TBA", "TBD", "Untitled", "Episode N") until its editors fill in the real
+// title. Treat those as missing when reconciling so a sibling provider's real
+// title wins instead of the placeholder clobbering it (20/20 2026-09-25:
+// TVDB said "TBA" while TMDB already had "The Salem Strangler").
+function isPlaceholderEpisodeTitle(value) {
+  const t = String(value || "").trim();
+  if (!t) return true;
+  const lower = t.toLowerCase();
+  if (/^(t\.?b\.?a\.?|t\.?b\.?d\.?|to be announced|to be determined|untitled|unknown)$/.test(lower)) return true;
+  return /^ep(?:isode)?\s*\d*$/.test(lower);
+}
+
 function episodeSignature(ep) {
   const s = Number(ep?.season);
   const n = Number(ep?.number);
@@ -804,8 +838,14 @@ function reconcileProviderEpisodes(groups) {
   const scored = [...buckets.values()].map(items => {
     const providers = new Set(items.map(x => x.source));
     const support = [...providers].reduce((sum, src) => sum + (sourceWeight[src] || 0), 0);
-    const best = items.slice().sort((a, b) => (sourceWeight[b.source] || 0) - (sourceWeight[a.source] || 0))[0];
-    return { items, providers, support, best };
+    const ranked = items.slice().sort((a, b) => (sourceWeight[b.source] || 0) - (sourceWeight[a.source] || 0));
+    const best = ranked[0];
+    // The bucket winner may carry a placeholder title from a stub listing while
+    // a lower-weight provider in the same bucket has the real title. Keep the
+    // winner's numbering but fill the title from the best non-placeholder title.
+    const titled = ranked.find(x => !isPlaceholderEpisodeTitle(x.title));
+    const record = (titled && isPlaceholderEpisodeTitle(best.title)) ? { ...best, title: titled.title } : best;
+    return { items, providers, support, best: record };
   });
 
   // If providers disagree about the same broadcast date, use consensus rather than
@@ -837,13 +877,15 @@ function reconcileProviderEpisodes(groups) {
 }
 
 function normalizeMazeEpisode(ep, resolved, trackedTitle) {
+  const showName = resolved.name || trackedTitle;
+  const season = applyShowSeasonOffset(ep.season, showName);
   return {
     id: `tvmaze:${ep.id}`,
     kind: "episode",
     source: "tvmaze",
     trackedTitle,
-    show: resolved.name || trackedTitle,
-    season: ep.season ?? null,
+    show: showName,
+    season: season ?? null,
     number: ep.number ?? null,
     title: ep.name || null,
     airdate: ep.airdate || null
