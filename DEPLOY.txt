@@ -1,3 +1,28 @@
+DVR WHEEL v0.2.60 - DEPLOY NOTES
+
+FRONTEND ONLY (no worker redeploy; worker stays at v0.2.57)
+- Upload the frontend files to the existing GitHub Pages repo as usual.
+- Existing wheel data stays in the same localStorage key: bedtimeMovieWheel.v2.
+- This build does NOT migrate, reset, reorder, or reweight anything.
+
+v0.2.60 changes
+- Fixed: two genuinely different episodes airing the same night were collapsed
+  into a single discovery card. mergeDiscoveries treated one show + one airdate
+  as a single canonical broadcast slot, so when Shark Tank's S18 premiere aired
+  E1 "Beast Mode" + E2 "Favorite Daughters" on 2026-09-30, the second episode's
+  metadata overwrote the first instead of creating a second card.
+- Pending slots are now keyed by show + airdate + S/E when providers know it.
+  A same-date arrival with a different finite S/E becomes its own card when
+  both sides have provider support >= 2 (genuine multi-episode night);
+  weak support on either side still merges as a provider numbering correction.
+- The reviewed show/date guard now uses the nuanced sameReviewedBroadcast
+  check (stale numbering/title variants still suppressed) instead of bluntly
+  suppressing everything for that date, so reviewing one episode of a
+  double-header no longer hides the other.
+- Verified with a 9-scenario regression test (double premiere, weak numbering
+  correction, post-review surfacing, stale-airdate suppression, generic-title
+  suppression, single episode, re-merge idempotence).
+
 DVR WHEEL v0.2.58 - DEPLOY NOTES
 
 FRONTEND ONLY (no worker redeploy; worker stays at v0.2.57)
