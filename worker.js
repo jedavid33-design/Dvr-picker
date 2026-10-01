@@ -7,13 +7,25 @@
  *   GET  /health
  *   GET  /api/search?q=Show%20Name
  *   POST /api/discover               { date: "YYYY-MM-DD", shows: [...] }
+ *   POST /api/backfill               { show: {...} }
+ *   POST /api/debug-discover         { date: "YYYY-MM-DD", show: {...} }
  *   POST /api/franchise-candidates   { franchises: [...], trackedIds: [...] }
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.57";
+const VERSION = "0.2.59";
+// Shows that air daily/near-daily where databases update at different speeds.
+// Single-provider episodes are trusted for these; others require 2+ providers
+// when 3+ providers were queried successfully.
+const DAILY_SHOW_PATTERNS = [
+  /jeopardy/i,
+  /wheel of fortune/i,
+  /big brother/i,
+  /the price is right/i,
+  /family feud/i,
+];
 const TVMAZE = "https://api.tvmaze.com";
-const UA = "DVR-Wheel/0.2.30";
+const UA = `DVR-Wheel/${VERSION}`;
 const EPISODATE = "https://www.episodate.com/api";
 const TVDB = "https://api4.thetvdb.com/v4";
 const TMDB = "https://api.themoviedb.org/3";
@@ -23,6 +35,16 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+
+    // Optional shared secret (M8). When the DVR_SHARED_TOKEN secret is set on
+    // the worker, /api routes require it as an x-dvr-token header (or ?token=).
+    // Unset -> the worker behaves exactly as before, so this is opt-in and
+    // backward compatible. /health stays open so uptime checks keep working.
+    const requiredToken = String(env?.DVR_SHARED_TOKEN || "").trim();
+    if (requiredToken && url.pathname !== "/health") {
+      const provided = request.headers.get("x-dvr-token") || url.searchParams.get("token") || "";
+      if (provided !== requiredToken) return json({ ok: false, error: "Unauthorized" }, 401);
+    }
 
     try {
       if (url.pathname === "/health" && request.method === "GET") {
@@ -108,8 +130,16 @@ export default {
   }
 };
 
+// A3: no upstream call may hang forever. Every provider fetch gets a bounded
+// timeout so one slow metadata service cannot stall the other providers or
+// wedge the client UI. AbortSignal.timeout is supported in the workers runtime.
+const PROVIDER_TIMEOUT_MS = 15000;
+function providerFetch(url, options = {}) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
+}
+
 async function tvmazeFetch(path) {
-  const r = await fetch(`${TVMAZE}${path}`, { headers: { "User-Agent": UA } });
+  const r = await providerFetch(`${TVMAZE}${path}`, { headers: { "User-Agent": UA } });
   if (!r.ok) {
     if (r.status === 404) return null;
     throw new Error(`TVmaze request failed (${r.status})`);
@@ -147,7 +177,7 @@ async function tmdbFetch(path, env) {
   const url = apiKey ? `${TMDB}${path}${joiner}api_key=${encodeURIComponent(apiKey)}` : `${TMDB}${path}`;
   const headers = { "Accept": "application/json", "User-Agent": UA };
   if (readToken) headers.Authorization = `Bearer ${readToken}`;
-  const r = await fetch(url, { headers });
+  const r = await providerFetch(url, { headers });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`TMDB request failed (${r.status})`);
   return await r.json();
@@ -253,7 +283,7 @@ async function tvdbToken(env) {
   const apiKey = String(env?.TVDB_API_KEY || "").trim();
   if (!apiKey) return null;
   if (tvdbTokenCache.token && Date.now() < tvdbTokenCache.expiresAt) return tvdbTokenCache.token;
-  const r = await fetch(`${TVDB}/login`, {
+  const r = await providerFetch(`${TVDB}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": UA },
     body: JSON.stringify({ apikey: apiKey })
@@ -270,7 +300,7 @@ async function tvdbToken(env) {
 async function tvdbFetch(path, env) {
   const token = await tvdbToken(env);
   if (!token) return null;
-  const r = await fetch(`${TVDB}${path}`, {
+  const r = await providerFetch(`${TVDB}${path}`, {
     headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json", "User-Agent": UA }
   });
   if (r.status === 404) return null;
@@ -351,7 +381,7 @@ function normalizeTvdbEpisode(ep, showName, trackedTitle, seriesId) {
 }
 
 async function episodateFetch(path) {
-  const r = await fetch(`${EPISODATE}${path}`, { headers: { "User-Agent": UA } });
+  const r = await providerFetch(`${EPISODATE}${path}`, { headers: { "User-Agent": UA } });
   if (!r.ok) throw new Error(`EpisoDate request failed (${r.status})`);
   return await r.json();
 }
@@ -635,6 +665,7 @@ async function discover(date, shows, env) {
   const episodes = [];
   const resolvedShows = [];
   const retryShows = [];
+  const showStatus = [];
   let schedule = [];
   try { schedule = await tvmazeScheduleByDate(date); } catch { schedule = []; }
 
@@ -680,7 +711,9 @@ async function discover(date, shows, env) {
     // chain stopped as soon as one provider returned anything, which let a stale EpisoDate
     // record mask a correct TMDB episode. v0.2.6 reconciles before surfacing results.
     let mazeEpisodes = [], epiEpisodes = [], tmdbEpisodes = [], tvdbEpisodes = [];
-    let providerLookupFailed = false;
+    // A1/A4: per-show provider status is computed below and returned in
+    // showStatus so the client can distinguish "no episode aired" from
+    // "a provider lookup failed" and retry honestly.
 
     // These provider lookups are independent. Run them together instead of serially so
     // one slow metadata service does not multiply the wait across every tracked show.
@@ -694,7 +727,15 @@ async function discover(date, shows, env) {
     epiEpisodes = epiResult.value || [];
     tmdbEpisodes = tmdbResult.value || [];
     tvdbEpisodes = tvdbResult.value || [];
-    providerLookupFailed = Boolean(mazeResult.failed || epiResult.failed || tmdbResult.failed || tvdbResult.failed);
+    // A1/A4: a provider lookup that threw is not "no episode aired". Record
+    // which providers failed for this show so the client can gate its
+    // "checked" marker on success and route the show to the isolated retry path.
+    const failedProviders = [
+      mazeResult.failed ? "tvmaze" : null,
+      epiResult.failed ? "episodate" : null,
+      tmdbResult.failed ? "tmdb" : null,
+      tvdbResult.failed ? "tvdb" : null
+    ].filter(Boolean);
 
     if (!mazeEpisodes.length && schedule.length) {
       mazeEpisodes = await tvmazeScheduleEpisodesForShow(schedule, canonicalName || title, mazeId);
@@ -730,11 +771,24 @@ async function discover(date, shows, env) {
       const matchingProviders = positiveProviders.filter(([, items]) =>
         items.some(item => episodeSignature(item) === episodeSignature(ep))
       ).map(([name]) => name);
+      const providerSupport = matchingProviders.length;
+      const successfulProviders = configuredSuccessful.length;
+      const showName = ep.show || ep.trackedTitle || "";
+      // A2: expose the daily-show classification on each episode so the client
+      // can apply the same trust rule to its isolated-verification ghost check.
+      const isDaily = DAILY_SHOW_PATTERNS.some(p => p.test(showName));
+      if (providerSupport === 1 && successfulProviders >= 3) {
+        const soleProvider = matchingProviders[0];
+        if (soleProvider !== "tvmaze" && !isDaily) {
+          continue;
+        }
+      }
       episodes.push({
         ...ep,
-        _providerSupport: matchingProviders.length,
-        _successfulProviders: configuredSuccessful.length,
-        _explicitNegatives: explicitNegativeCount
+        _providerSupport: providerSupport,
+        _successfulProviders: successfulProviders,
+        _explicitNegatives: explicitNegativeCount,
+        _dailyShow: isDaily
       });
     }
 
@@ -764,6 +818,11 @@ async function discover(date, shows, env) {
       if (ranked.length > 1 && ranked[0] === ranked[1]) retryShows.push(title);
     }
 
+    // A4: shows whose provider lookups failed get the isolated retry path too,
+    // and the client learns about the failure via showStatus (A1).
+    showStatus.push({ title, ok: failedProviders.length === 0, failedProviders });
+    if (failedProviders.length && !retryShows.includes(title)) retryShows.push(title);
+
     resolvedShows.push({
       title,
       tvmazeId: mazeId,
@@ -775,7 +834,7 @@ async function discover(date, shows, env) {
     });
   }
 
-  return { episodes: dedupeEpisodes(episodes), resolvedShows, retryShows };
+  return { episodes: dedupeEpisodes(episodes), resolvedShows, retryShows, showStatus };
 }
 
 // Provider season-numbering corrections. Both TVDB and TMDB number 20/20's

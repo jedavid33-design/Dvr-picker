@@ -15,7 +15,6 @@ const lastTvCheckStorageKey = "dvrPicker.lastTvCheck.v1";
 const lastTvEpisodeDateStorageKey = "dvrPicker.lastTvEpisodeDate.v1";
 const lastFranchiseCheckStorageKey = "dvrPicker.lastFranchiseCheck.v1";
 const trackedTvExpandedStorageKey = "dvrPicker.trackedTvExpanded.v1";
-const autoWeightStartedStorageKey = "dvrPicker.autoWeightStarted.v1";
 let movies = load();
 let lastState = null;
 let selectedIndex = null;
@@ -149,7 +148,16 @@ function load() {
     return freshDefaults();
   }
 }
-function save() { localStorage.setItem(storageKey, JSON.stringify(movies)); }
+// M6: the three main savers used to throw on QuotaExceededError (or in
+// locked-down contexts), aborting handlers mid-action with the in-memory
+// state changed but nothing persisted. Surface a visible status instead.
+function storageWriteFailed() {
+  tvDiscoveryStatus.textContent = "Couldn't save — browser storage is full or unavailable. Free space and try again.";
+}
+function save() {
+  try { localStorage.setItem(storageKey, JSON.stringify(movies)); }
+  catch { storageWriteFailed(); }
+}
 function insertAtRandomWheelPosition(item) {
   // Existing array order IS the frozen wheel order. Choose one of N+1 insertion
   // boundaries so adding an item never changes the relative order of survivors.
@@ -178,7 +186,7 @@ function effectiveWeight(movie) {
   const today = localDayNumber(new Date().toISOString().slice(0,10));
   const air = localDayNumber(movie?.airdate);
   if (air != null && today != null) return automaticGrowthForDays(today - air);
-  const started = localDayNumber(movie?.autoWeightStartedAt || localStorage.getItem(autoWeightStartedStorageKey));
+  const started = localDayNumber(movie?.autoWeightStartedAt);
   if (started != null && today != null) return manual * automaticGrowthForDays(today - started);
   return manual;
 }
@@ -329,17 +337,6 @@ function spin() {
   requestAnimationFrame(animate);
 }
 
-function updateWeights() {
-  movies = movies.map((m, i) => ({
-    ...m,
-    weight: m.locked
-      ? 1
-      : i === selectedIndex
-        ? 1
-        : m.weight + 1
-  }));
-}
-
 function markWatched() {
   if (selectedIndex == null) return;
 
@@ -356,12 +353,6 @@ function markWatched() {
 
   save();
   render();
-}
-function shuffleItems() {
-  for (let i = movies.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [movies[i], movies[j]] = [movies[j], movies[i]];
-  }
 }
 function undo() {
   if (!lastState) return;
@@ -472,8 +463,13 @@ function renderList() {
     row.className = "movie-row";
     const shownWeight = effectiveWeight(movie);
     const pct = Math.round(shownWeight / total * 100);
-    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${shownWeight.toFixed(shownWeight < 10 ? 1 : 0)}</div><button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`;
-    row.querySelector(".remove").onclick = () => {
+    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${shownWeight.toFixed(shownWeight < 10 ? 1 : 0)}</div>${movie.locked ? "" : `<button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`}`;
+    const removeBtn = row.querySelector(".remove");
+    if (!removeBtn) { movieList.appendChild(row); return; }
+    removeBtn.onclick = () => {
+      // M1: belt-and-braces — the locked entry is never removable, matching
+      // the markWatched() guard. The button is hidden for locked rows above.
+      if (movie.locked) return;
       lastState = JSON.stringify(movies);
       const removedSelectedItem = wheelIndex === selectedIndex;
       movies.splice(wheelIndex, 1);
@@ -549,11 +545,13 @@ function loadJsonArray(key) {
 }
 
 function saveTrackedShows() {
-  localStorage.setItem(trackedShowsStorageKey, JSON.stringify(trackedShows));
+  try { localStorage.setItem(trackedShowsStorageKey, JSON.stringify(trackedShows)); }
+  catch { storageWriteFailed(); }
 }
 
 function saveDiscoveries() {
-  localStorage.setItem(discoveriesStorageKey, JSON.stringify(discoveries));
+  try { localStorage.setItem(discoveriesStorageKey, JSON.stringify(discoveries)); }
+  catch { storageWriteFailed(); }
 }
 
 function getWorkerUrl() {
@@ -662,8 +660,20 @@ function recentlyDismissedEpisodes() {
     .sort((a, b) => Date.parse(b.reviewedAt || 0) - Date.parse(a.reviewedAt || 0));
 }
 
-function restoreDismissedDiscovery(id) {
-  const ep = discoveries.find(item => item.id === id);
+// A5: resolve a discovery action target to the live object. Buttons pass the
+// rendered record itself (immune to id rewrites between render and tap);
+// callers holding only an id string still work via lookup.
+function resolveDiscovery(ref) {
+  if (!ref) return null;
+  if (typeof ref === "object") {
+    if (discoveries.includes(ref)) return ref;
+    ref = ref.id;
+  }
+  return discoveries.find(item => item.id === ref) || null;
+}
+
+function restoreDismissedDiscovery(ref) {
+  const ep = resolveDiscovery(ref);
   if (!ep || ep.status !== "dismissed" || (ep.kind || "episode") !== "episode") return;
   ep.status = "pending";
   delete ep.reviewedAt;
@@ -694,7 +704,7 @@ function renderRecentlyDismissed() {
     const restore = document.createElement("button");
     restore.className = "quiet-btn";
     restore.textContent = "Restore";
-    restore.onclick = () => restoreDismissedDiscovery(ep.id);
+    restore.onclick = () => restoreDismissedDiscovery(ep);
     buttons.append(restore);
     row.append(main, buttons);
     recentlyDismissedList.appendChild(row);
@@ -747,11 +757,11 @@ function renderDiscoveries() {
     buttons.className = "discovery-buttons";
     const add = document.createElement("button");
     add.textContent = "Add";
-    add.onclick = () => addDiscoveryToWheel(ep.id);
+    add.onclick = () => addDiscoveryToWheel(ep);
     const dismiss = document.createElement("button");
     dismiss.className = "quiet-btn";
     dismiss.textContent = "Dismiss";
-    dismiss.onclick = () => dismissDiscovery(ep.id);
+    dismiss.onclick = () => dismissDiscovery(ep);
     buttons.append(add, dismiss);
 
     row.append(main, buttons);
@@ -776,19 +786,22 @@ function renderDiscoveries() {
     buttons.className = "discovery-buttons";
     const track = document.createElement("button");
     track.textContent = "Track";
-    track.onclick = () => approveFranchiseCandidate(candidate.id);
+    track.onclick = () => approveFranchiseCandidate(candidate);
     const ignore = document.createElement("button");
     ignore.className = "quiet-btn";
     ignore.textContent = "Ignore";
-    ignore.onclick = () => dismissDiscovery(candidate.id);
+    ignore.onclick = () => dismissDiscovery(candidate);
     buttons.append(track, ignore);
     row.append(main, buttons);
     franchiseCandidateList.appendChild(row);
   });
 }
 
-function addDiscoveryToWheel(id) {
-  const ep = discoveries.find(item => item.id === id);
+function addDiscoveryToWheel(ref) {
+  // A5: provider ids can be rewritten across runs (source reconciliation
+  // flaps), so resolve the live discovery object first — object identity when
+  // the caller passes the rendered record, id lookup as a fallback.
+  const ep = resolveDiscovery(ref);
   if (!ep || ep.status === "added" || ep.kind === "series-candidate") return;
 
   // Freeze survivor order; only the newly added episode chooses a random wheel slot.
@@ -802,8 +815,8 @@ function addDiscoveryToWheel(id) {
   renderDiscoveries();
 }
 
-function dismissDiscovery(id) {
-  const ep = discoveries.find(item => item.id === id);
+function dismissDiscovery(ref) {
+  const ep = resolveDiscovery(ref);
   if (!ep) return;
   ep.status = "dismissed";
   ep.reviewedAt = new Date().toISOString();
@@ -835,9 +848,9 @@ function dismissAllDiscoveries() {
   renderDiscoveries();
 }
 
-function approveFranchiseCandidate(id) {
-  const candidate = discoveries.find(item => item.id === id && item.kind === "series-candidate");
-  if (!candidate) return;
+function approveFranchiseCandidate(ref) {
+  const candidate = resolveDiscovery(ref);
+  if (!candidate || candidate.kind !== "series-candidate") return;
   if (!trackedShows.some(item =>
     (candidate.tvmazeId && Number(item.tvmazeId) === Number(candidate.tvmazeId)) ||
     (candidate.episodateId && Number(item.episodateId) === Number(candidate.episodateId)) ||
@@ -919,13 +932,34 @@ function renderTrackedShows() {
   });
 }
 
+const workerTokenStorageKey = "dvrPicker.workerToken.v1";
+function getWorkerToken() {
+  try { return (localStorage.getItem(workerTokenStorageKey) || "").trim(); }
+  catch { return ""; }
+}
+
 async function workerFetch(path, options = {}) {
   const base = getWorkerUrl();
   if (!base) throw new Error("Add the Worker URL in TV Connection first.");
-  const response = await fetch(`${base}${path}`, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || `Request failed (${response.status})`);
-  return payload;
+  // A3: a hung upstream must never wedge the UI on "Checking…" forever.
+  // Abort the request after 30s and surface the timeout honestly; every
+  // caller already resets tvSearchBusy in a finally block.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const headers = { ...(options.headers || {}) };
+    const token = getWorkerToken();
+    if (token) headers["x-dvr-token"] = token;
+    const response = await fetch(`${base}${path}`, { ...options, headers, signal: controller.signal });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error("Worker request timed out after 30s.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function searchTrackedShow() {
@@ -1196,7 +1230,19 @@ function mergeDiscoveries(incoming) {
     // that broadcast (stale numbering or title) — never a different episode
     // from a multi-episode night.
     const reviewedHits = [...new Set(bkeys.map(k => reviewedByBroadcast.get(k)).filter(Boolean))];
-    if (reviewedHits.some(r => sameReviewedBroadcast(r, ep))) continue;
+    const reviewedBroadcastHit = reviewedHits.find(r => sameReviewedBroadcast(r, ep));
+    if (reviewedBroadcastHit) {
+      // A5: heal a stale id on broadcast-key-matched reviewed records too, not
+      // just S/E-matched ones. Guarded so a multi-episode night never heals one
+      // episode's record to another episode's id: heal only when the records
+      // identify as the same episode, or the reviewed record carries no finite
+      // S/E that could conflict.
+      if (reviewedBroadcastHit.id !== ep.id &&
+          (sameEpisodeIdentity(reviewedBroadcastHit, ep) || !hasFiniteEpisodeNumber(reviewedBroadcastHit))) {
+        reviewedBroadcastHit.id = ep.id;
+      }
+      continue;
+    }
 
     let previous = skeys.map(k => pendingBySlot.get(k)).find(Boolean);
     if (!previous && bkeys.length) {
@@ -1224,7 +1270,10 @@ function mergeDiscoveries(incoming) {
         for (const rec of candidates) {
           if (!rec || rec === item || rec.id !== item.id || rekeyed.has(rec)) continue;
           rekeyed.add(rec);
-          if (!sameEpisodeIdentity(rec, item)) rec.id = String(rec.id) + "#stale";
+          // A5: idempotent re-key — strip any existing #stale suffixes before
+          // appending, so a squatted episode that never arrives cannot grow
+          // the id into "#stale#stale…" across runs.
+          if (!sameEpisodeIdentity(rec, item)) rec.id = String(rec.id).replace(/(#stale)+$/, "") + "#stale";
         }
       }
       for (const k of skeys) pendingBySlot.set(k, item);
@@ -1262,6 +1311,7 @@ function mergeDiscoveries(incoming) {
 
   // One item can be indexed under several keys (name variants, broadcast + S/E).
   const seenIds = new Set();
+  const seenFingerprints = new Set();
   discoveries = [
     ...other,
     ...reviewedByBroadcast.values(),
@@ -1272,6 +1322,15 @@ function mergeDiscoveries(incoming) {
     if (id) {
       if (seenIds.has(id)) return false;
       seenIds.add(id);
+      return true;
+    }
+    // M11: records without an id were kept unconditionally — the same object
+    // indexed under multiple keys could survive twice. Dedupe them by
+    // fingerprint instead.
+    const fp = discoveryFingerprint(item);
+    if (fp) {
+      if (seenFingerprints.has(fp)) return false;
+      seenFingerprints.add(fp);
     }
     return true;
   }).slice(-800);
@@ -1300,10 +1359,13 @@ function catchUpDates() {
   const recent = new Set(rollingRecheckDates(3));
   const last = localStorage.getItem(lastTvEpisodeDateStorageKey);
   const dates = new Set();
-  if (!last || !parseLocalDate(last)) return [];
+  if (!last || !parseLocalDate(last)) { lastCatchUpTruncatedDays = 0; return []; }
   if (last < yesterday) {
     let start = addDays(last, 1);
     const gap = daysBetween(start, yesterday);
+    // M9: never silently drop the older days — record how many were skipped
+    // so the status line can report them.
+    lastCatchUpTruncatedDays = gap > 29 ? gap - 29 : 0;
     if (gap > 29) start = addDays(yesterday, -29);
     for (let cursor = start; cursor && cursor <= yesterday; cursor = addDays(cursor, 1)) {
       if (!recent.has(cursor)) dates.add(cursor);
@@ -1547,6 +1609,59 @@ document.addEventListener("click", (event) => {
   runTvDebug();
 });
 
+// M9: catchUpDates() silently truncates gaps over 30 days. Track how many
+// older days were skipped so the status line can say so honestly.
+let lastCatchUpTruncatedDays = 0;
+
+// A1/M10: shared end-of-run bookkeeping for the TV check entry points.
+// dateResults entries look like Promise.allSettled results:
+// { status: "fulfilled", value: payload } or { status: "rejected", reason }.
+// The "checked through" marker advances only over the longest leading run of
+// successfully checked dates (dates must be ascending); a failed date keeps
+// the marker behind it so the next check retries it. lastTvCheck is stamped
+// only when every date in the run completed.
+function summarizeDateResults(dates, dateResults) {
+  const failures = [];
+  let prefixEnd = null;
+  let prefixBroken = false;
+  for (let i = 0; i < dates.length; i++) {
+    const result = dateResults[i];
+    const payload = result && result.status === "fulfilled" ? result.value : null;
+    const ok = Boolean(payload && payload.ok === true);
+    if (!ok) {
+      prefixBroken = true;
+      failures.push({
+        date: dates[i],
+        failedShows: Array.isArray(payload && payload.failedShows) ? payload.failedShows : []
+      });
+    } else if (!prefixBroken) {
+      prefixEnd = dates[i];
+    }
+  }
+  return { failures, prefixEnd };
+}
+
+function recordCompletedTvDates(dates, dateResults) {
+  const { failures, prefixEnd } = summarizeDateResults(dates, dateResults);
+  if (prefixEnd) localStorage.setItem(lastTvEpisodeDateStorageKey, prefixEnd);
+  if (!failures.length) localStorage.setItem(lastTvCheckStorageKey, todayString());
+  return failures;
+}
+
+// Honest end-of-run status: never let the status line claim "caught up" when
+// a date did not actually complete, and say when old dates were skipped.
+function reportTvCheckOutcome(failures) {
+  if ((!failures || !failures.length) && !lastCatchUpTruncatedDays) return;
+  const bits = (failures || []).map(f =>
+    `${formatAirdate(f.date)}${f.failedShows.length ? ` (${f.failedShows.length} provider error${f.failedShows.length === 1 ? "" : "s"})` : ""} — will retry`
+  );
+  if (lastCatchUpTruncatedDays > 0) {
+    bits.push(`couldn't check ${lastCatchUpTruncatedDays} older day${lastCatchUpTruncatedDays === 1 ? "" : "s"} (gap over 30 days)`);
+  }
+  const pending = pendingEpisodeDiscoveries().length + pendingFranchiseCandidates().length;
+  tvDiscoveryStatus.textContent = `Check incomplete: ${bits.join("; ")}.${pending ? ` ${pending} still waiting for review.` : ""}`;
+}
+
 async function discoverDate(date, { batchSize = 5 } = {}) {
   const diagStarted = performance.now();
   const diag = { date, batches: 0, retries: 0, batchMs: [], retryMs: [], pruned: [] };
@@ -1562,28 +1677,51 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   const DISCOVERY_BATCH_SIZE = Math.max(1, Number(batchSize) || 5);
   const allEpisodes = [];
   const allResolvedShows = [];
+  // A1: a date is "checked" only when every batch succeeded AND no show
+  // reported a provider lookup failure. Anything less leaves the date
+  // unmarked so the next check retries it instead of silently dropping it.
+  let checkFailed = false;
+  const failedShowNames = new Set();
+  const noteShowStatus = (payload) => {
+    for (const row of payload?.showStatus || []) {
+      if (!row || row.ok !== false) continue;
+      failedShowNames.add(normalizeTrackedName(row.title));
+    }
+  };
 
-  const batchJobs = [];
+  const runBatch = async (shows) => {
+    const batchStarted = performance.now();
+    const payload = await workerFetch("/api/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date, maxAirdate, shows })
+    });
+    return { shows, payload, ms: Math.round(performance.now() - batchStarted) };
+  };
+  const batchInputs = [];
   for (let i = 0; i < trackedShows.length; i += DISCOVERY_BATCH_SIZE) {
-    const shows = trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE);
-    batchJobs.push((async () => {
-      const batchStarted = performance.now();
-      const payload = await workerFetch("/api/discover", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date, maxAirdate, shows })
-      });
-      return { shows, payload, ms: Math.round(performance.now() - batchStarted) };
-    })());
+    batchInputs.push(trackedShows.slice(i, i + DISCOVERY_BATCH_SIZE));
   }
 
-  const settledBatches = await Promise.allSettled(batchJobs);
+  const settledBatches = await Promise.allSettled(batchInputs.map(runBatch));
+  // One bounded retry with backoff for failed batches before giving up.
+  const failedBatchIndexes = [];
+  settledBatches.forEach((result, i) => { if (result.status !== "fulfilled") failedBatchIndexes.push(i); });
+  if (failedBatchIndexes.length) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const retried = await Promise.allSettled(failedBatchIndexes.map(i => runBatch(batchInputs[i])));
+    retried.forEach((result, j) => {
+      diag.retries++;
+      if (result.status === "fulfilled") settledBatches[failedBatchIndexes[j]] = result;
+    });
+  }
   const retryByKey = new Map();
   for (const result of settledBatches) {
     diag.batches++;
-    if (result.status !== "fulfilled") continue;
+    if (result.status !== "fulfilled") { checkFailed = true; continue; }
     const { shows, payload, ms } = result.value;
     diag.batchMs.push(ms);
+    noteShowStatus(payload);
     if (Array.isArray(payload.episodes)) allEpisodes.push(...payload.episodes.filter(ep => ep?.airdate === date));
     if (Array.isArray(payload.resolvedShows)) allResolvedShows.push(...payload.resolvedShows);
 
@@ -1622,9 +1760,10 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   const settledRetries = await Promise.allSettled(retryJobs);
   for (const result of settledRetries) {
     diag.retries++;
-    if (result.status !== "fulfilled") continue;
+    if (result.status !== "fulfilled") { checkFailed = true; continue; }
     const { key, payload, ms } = result.value;
     diag.retryMs.push(ms);
+    noteShowStatus(payload);
     const retryEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
     if (retryEpisodes.length) {
       for (let j = allEpisodes.length - 1; j >= 0; j--) {
@@ -1662,32 +1801,40 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     });
     const verified = await Promise.allSettled(verifyJobs);
     for (const result of verified) {
-      if (result.status !== "fulfilled") continue;
+      if (result.status !== "fulfilled") { checkFailed = true; continue; }
       const { key, payload, ms } = result.value;
+      noteShowStatus(payload);
       const isolatedEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
       noteIsolatedVerification(key, date, isolatedEpisodes.length > 0);
 
-      // One-source ghosts: an isolated endpoint can surface a stale provider record
-      // even when the verified rolling discovery found no broadcast for this show/date.
-      // Count provider matches from the diagnostic/provider payload when available.
-      const providerRows = Array.isArray(payload.providers) ? payload.providers :
-        (Array.isArray(payload.providerResults) ? payload.providerResults : []);
-      const positiveProviders = providerRows.filter(row =>
-        row && (row.episode || row.match || row.matched === true)
-      ).length;
+      // A2: one-source ghosts. An isolated query can surface a stale provider
+      // record even when the batch discovery found no broadcast for this
+      // show/date. Trust the isolated result unless it is a lone
+      // single-provider sighting while 3+ providers were queried successfully
+      // and the show is not a daily show whose databases update at different
+      // speeds — mirroring the worker's own trust rule. Uses
+      // discoveryFingerprint (the real one-object identity) and the
+      // per-episode provider breakdown the worker now sends (_providerSupport,
+      // _successfulProviders, _dailyShow).
       const normalHasBroadcast = allEpisodes.some(ep =>
         ep?.airdate === date &&
         normalizeTrackedName(ep.show || ep.trackedTitle) === key
       );
-      if (isolatedEpisodes.length && positiveProviders === 1 && !normalHasBroadcast) {
-        const ghosts = new Set(isolatedEpisodes.map(ep =>
-          episodeFingerprint(ep.show || ep.trackedTitle, ep.season, ep.number, ep.airdate, ep.title)
-        ));
+      const suspectGhost = isolatedEpisodes.length > 0 && !normalHasBroadcast &&
+        isolatedEpisodes.every(ep =>
+          Number(ep._providerSupport || 0) === 1 &&
+          Number(ep._successfulProviders || 0) >= 3 &&
+          !ep._dailyShow
+        );
+      if (suspectGhost) {
+        const ghosts = new Set(isolatedEpisodes.map(ep => discoveryFingerprint(ep)));
+        const before = discoveries.length;
         discoveries = discoveries.filter(item =>
           item.status !== "pending" ||
           item.kind === "series-candidate" ||
-          !ghosts.has(episodeFingerprint(item.show || item.trackedTitle, item.season, item.number, item.airdate, item.title))
+          !ghosts.has(discoveryFingerprint(item))
         );
+        if (discoveries.length !== before) diag.pruned.push(`${key}: ghost-pruned ${before - discoveries.length}`);
         saveDiscoveries();
         continue;
       }
@@ -1718,7 +1865,19 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     uniqueEpisodes.push(ep);
   }
 
-  const payload = { episodes: uniqueEpisodes, resolvedShows: allResolvedShows };
+  // A1: gate the "checked" marker on fetch success. A failed batch (even after
+  // the one bounded retry) or any show with a provider lookup failure leaves
+  // this date unmarked, so the next check retries it instead of silently
+  // dropping it while the UI claims to be caught up. M10: the marker itself
+  // is written once by the caller (longest completed date prefix), never here.
+  const checkOk = !checkFailed && failedShowNames.size === 0;
+  const payload = {
+    episodes: uniqueEpisodes,
+    resolvedShows: allResolvedShows,
+    ok: checkOk,
+    date,
+    failedShows: [...failedShowNames]
+  };
   mergeDiscoveries(uniqueEpisodes);
 
   // Do not delete an established broadcast merely because a provider omitted it
@@ -1738,10 +1897,10 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     }
   }
   saveTrackedShows();
-  localStorage.setItem(lastTvEpisodeDateStorageKey, date);
-  localStorage.setItem(lastTvCheckStorageKey, todayString());
   diag.totalMs = Math.round(performance.now() - diagStarted);
   diag.episodes = uniqueEpisodes.length;
+  diag.checkOk = checkOk;
+  diag.failedShows = [...failedShowNames];
   diag.pendingAfter = discoveries.filter(x => x.status === "pending").map(x => ({ show: x.show || x.trackedTitle, season: x.season, number: x.number, airdate: x.airdate }));
   const history = JSON.parse(localStorage.getItem("dvrTvPerformanceDiagnostics") || "[]");
   history.push(diag);
@@ -1774,6 +1933,10 @@ async function discoverYesterday({ automatic = false } = {}) {
       trace.push(rollingTraceSnapshot(`after ${date}`));
       writeRollingTrace(trace);
     }
+    // M10: write the "checked through" marker once for the whole run — the
+    // longest leading run of successfully checked dates — instead of racing
+    // one write per concurrent date. A failed date keeps the marker behind it.
+    const failures = recordCompletedTvDates(dates, dateResults);
     // Use every result observed in this completed rolling run, including earlier
     // broadcasts that were already reviewed and therefore are not pending cards.
     const earliestByEpisode = new Map();
@@ -1828,6 +1991,9 @@ async function discoverYesterday({ automatic = false } = {}) {
     saveDiscoveries();
     renderTrackedShows();
     renderDiscoveries();
+    // A1: report honestly when any date did not complete, instead of letting
+    // the status line claim "caught up".
+    reportTvCheckOutcome(failures);
     trace.push(rollingTraceSnapshot("after final render"));
     writeRollingTrace(trace);
   } catch (error) {
@@ -1840,36 +2006,8 @@ async function discoverYesterday({ automatic = false } = {}) {
     checkTvBtn.disabled = false;
     checkTvBtn.textContent = "Check yesterday";
   }
-}
-
-async function catchUpDiscoveries({ automatic = false } = {}) {
-  if (tvSearchBusy || !getWorkerUrl() || !trackedShows.length) return;
-  const dates = catchUpDates();
-  if (!dates.length) {
-    renderDiscoveries();
-    await checkFranchiseCandidates();
-    return;
-  }
-  tvSearchBusy = true;
-  checkTvBtn.disabled = true;
-  checkTvBtn.textContent = "Catching up…";
-  try {
-    for (let i = 0; i < dates.length; i++) {
-      const date = dates[i];
-      tvDiscoveryStatus.textContent = dates.length === 1
-        ? `Checking ${formatAirdate(date)}…`
-        : `Catching up ${i + 1} of ${dates.length} · ${formatAirdate(date)}…`;
-      await discoverDate(date, { batchSize: 12 });
-    }
-    renderTrackedShows();
-    renderDiscoveries();
-  } catch (error) {
-    tvDiscoveryStatus.textContent = automatic ? `Automatic catch-up paused: ${error.message}` : error.message;
-  } finally {
-    tvSearchBusy = false;
-    checkTvBtn.disabled = false;
-    checkTvBtn.textContent = "Check yesterday";
-  }
+  // M7: the manual check is a full check too — franchise candidates included
+  // (the 7-day throttle is respected inside checkFranchiseCandidates).
   await checkFranchiseCandidates();
 }
 
@@ -1886,6 +2024,7 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
   writeRollingTrace(trace);
 
   try {
+    const dateResults = [];
     for (let i = 0; i < dates.length; i++) {
       const date = dates[i];
       tvDiscoveryStatus.textContent = dates.length === 1
@@ -1893,14 +2032,19 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
         : `Checking TV ${i + 1} of ${dates.length} · ${formatAirdate(date)}…`;
       try {
         const payload = await discoverDate(date);
+        dateResults.push({ status: "fulfilled", value: payload });
         if (Array.isArray(payload?.episodes)) rollingEpisodes.push(...payload.episodes);
         trace.push(`${date} response: ${(payload.episodes || []).map(ep => `${ep.show || ep.trackedTitle} ${episodeNumberLabel(ep)} ${ep.airdate}`).join(" | ") || "no episodes"}`);
       } catch (error) {
+        dateResults.push({ status: "rejected", reason: error });
         trace.push(`${date} ERROR: ${error.message}`);
       }
       trace.push(rollingTraceSnapshot(`after ${date}`));
       writeRollingTrace(trace);
     }
+    // M10: one marker write for the whole run — the longest leading run of
+    // successfully checked dates. A failed date keeps the marker behind it.
+    const failures = recordCompletedTvDates(dates, dateResults);
 
     // Missing from one refresh is NOT evidence that a known broadcast vanished.
     // Reconcile only positive conflicts observed inside this completed run.
@@ -1948,6 +2092,9 @@ async function unifiedOpenTvCheck({ automatic = false } = {}) {
     saveDiscoveries();
     renderTrackedShows();
     renderDiscoveries();
+    // A1: report honestly when any date did not complete, instead of letting
+    // the status line claim "caught up".
+    reportTvCheckOutcome(failures);
     trace.push(rollingTraceSnapshot("after final render"));
     writeRollingTrace(trace);
   } catch (error) {
@@ -2001,27 +2148,8 @@ async function saveAndTestWorker() {
   }
 }
 
-function repairV0250FalseCleanup() {
-  const repairKey = "dvrPicker.repair.v0251";
-  if (localStorage.getItem(repairKey)) return;
-  const restore = [
-    { id:"tmdb:2912:7834570:43:8:2026-09-23", fp:"episode|jeopardy|43|8|2026-09-23|", show:"Jeopardy!", season:43, number:8, airdate:"2026-09-23", status:"pending", title:"Show #9623" },
-    { id:"tmdb:2778:7834557:44:8:2026-09-23", fp:"episode|wheel of fortune|44|8|2026-09-23|", show:"Wheel of Fortune", season:44, number:8, airdate:"2026-09-23", status:"pending", title:"Words With Friends" }
-  ];
-  for (const item of restore) {
-    const sameBroadcast = discoveries.some(d =>
-      normalizeTrackedName(d.show || d.trackedTitle) === normalizeTrackedName(item.show) &&
-      d.airdate === item.airdate
-    );
-    if (!sameBroadcast) discoveries.push(item);
-  }
-  saveDiscoveries();
-  localStorage.setItem(repairKey, "1");
-}
-
 function initTvDiscovery() {
   migrateOldCheckState();
-  repairV0250FalseCleanup();
   workerUrlInput.value = getWorkerUrl();
   renderTrackedShows();
   renderDiscoveries();
@@ -2054,11 +2182,16 @@ function initTvDiscovery() {
   if (debugDateInput && !debugDateInput.value) debugDateInput.value = yesterdayString();
   refreshDebugShowOptions();
 
-  // One automatic TV action on every open/reload. Build one date set containing
+  // One automatic TV action per day, not per open/reload (M12): skip when a
+  // check already completed today and there is no catch-up gap, so repeated
+  // opens don't multiply provider load. Build one date set containing
   // any true catch-up gap plus the latest three completed air dates, then process each
   // date exactly once. This replaces the old catch-up-then-check-yesterday double pass.
   if (getWorkerUrl() && trackedShows.length) {
-    unifiedOpenTvCheck({ automatic: true });
+    const checkedToday = localStorage.getItem(lastTvCheckStorageKey) === todayString();
+    if (!checkedToday || catchUpDates().length) {
+      unifiedOpenTvCheck({ automatic: true });
+    }
   }
 }
 
@@ -2068,16 +2201,6 @@ initTvDiscovery();
 // v0.2.16: refresh diagnostics after localStorage-backed tracked state has initialized.
 queueMicrotask(() => refreshDebugShowOptions());
 window.addEventListener("pageshow", () => refreshDebugShowOptions());
-
-// v0.2.19: aggressively check for a newly deployed service worker/app shell.
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration) await registration.update();
-    } catch {}
-  });
-}
 
 
 // v0.2.36 diagnostic: in-app pull-to-refresh for installed/mobile web app.

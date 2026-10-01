@@ -1,3 +1,24 @@
+DVR Wheel v0.2.63 (2026-10-01)
+- Full audit fix pass (5 major + 13 minor findings):
+  - Major: /api/discover returns per-show status; frontend only advances the
+    "checked through" marker over a fully successful date prefix and says
+    "Check incomplete" instead of claiming to be caught up.
+  - Major: provider ids no longer looked up by raw id — discovery buttons act
+    on the rendered record itself (immune to id churn); re-key is idempotent
+    (#stale#stale… impossible); broadcast-key-matched reviewed records heal
+    stale ids; merge dedupes no-id records by fingerprint.
+  - Major: all 5 worker provider fetches have 15s timeouts; all frontend
+    worker calls have 30s timeouts with "Worker request timed out" errors.
+  - Ghost-prune rewritten against real episode fields (it previously called a
+    nonexistent function).
+  - Minor: shared-secret gate (opt-in, both ends), locked-item Remove button
+    removed, dead code deleted, storage-full errors surface visibly,
+    auto-check throttled to once/day, "caught up" status honest, version query
+    strings aligned (styles.css?v=0.2.63), franchise candidates included in
+    manual checks, 30-day catch-up cap disclosed when hit.
+- 20-check regression suite passes; 13-check frontend bookkeeping suite passes.
+- app.js?v=0.2.63, worker v0.2.59 (deployed).
+
 DVR Wheel v0.2.62 (2026-10-01)
 - Fixes E1 still not surfacing after its E2 card was already added/dismissed: the reviewed E2 card kept the corrupt pre-v0.2.60 id (E1's id), so the final id-dedupe kept dropping the new E1 card.
 - Reviewed-episode suppression now heals the reviewed record's id to the worker's current id (same S/E = same episode, worker id authoritative).
