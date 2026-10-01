@@ -1104,11 +1104,32 @@ function discoveryFingerprint(item) {
   return `episode|${show}|${season}|${number}|${airdate}|${season === "" && number === "" ? title : ""}`;
 }
 
+function hasFiniteEpisodeNumber(item) {
+  return Number.isFinite(Number(item?.season)) && Number.isFinite(Number(item?.number));
+}
+// A pending slot is show + airdate + S/E when providers know it. Two genuinely
+// different episodes airing the same night (double premieres/finales) must not
+// collapse into one card the way stale provider numbering variants do.
+function discoverySlotKeys(item) {
+  if (!item || (item.kind || "episode") !== "episode") return [];
+  const airdate = item.airdate || "";
+  if (!airdate) return [];
+  const sn = hasFiniteEpisodeNumber(item) ? `${Number(item.season)}|${Number(item.number)}` : "";
+  return discoveryShowKeys(item).map(sk => `slot|${sk}|${airdate}|${sn}`);
+}
+function sameSlotEpisode(a, b) {
+  return hasFiniteEpisodeNumber(a) && hasFiniteEpisodeNumber(b) &&
+    Number(a.season) === Number(b.season) && Number(a.number) === Number(b.number);
+}
+
 function mergeDiscoveries(incoming) {
-  // A TV broadcast is canonically show + airdate. Provider IDs and episode numbers
-  // are metadata about that slot, not separate discoveries.
+  // A TV broadcast slot is show + airdate + episode number when providers know
+  // it. Provider IDs and episode numbers are metadata about that slot, not
+  // separate discoveries — except on genuine multi-episode nights, where two
+  // different S/E pairs are two different broadcasts sharing a date.
   const reviewedByBroadcast = new Map();
   const reviewedByEpisode = new Map();
+  const pendingBySlot = new Map();
   const pendingByBroadcast = new Map();
   const other = [];
 
@@ -1128,9 +1149,18 @@ function mergeDiscoveries(incoming) {
       // detach a reviewed record from later runs.
       indexReviewed(reviewedByBroadcast, bkeys, item);
       indexReviewed(reviewedByEpisode, ekeys, item);
-    } else if (bkeys.length && !bkeys.some(k => pendingByBroadcast.has(k))) {
-      for (const k of bkeys) pendingByBroadcast.set(k, item);
-    } else if (!bkeys.length) {
+    } else if (bkeys.length) {
+      const skeys = discoverySlotKeys(item);
+      const bTaken = bkeys.map(k => pendingByBroadcast.get(k)).find(Boolean);
+      const seMismatch = Boolean(bTaken) && hasFiniteEpisodeNumber(item) && hasFiniteEpisodeNumber(bTaken) &&
+        !sameSlotEpisode(item, bTaken);
+      if (!skeys.some(k => pendingBySlot.has(k)) && (!bTaken || seMismatch)) {
+        for (const k of skeys) pendingBySlot.set(k, item);
+        for (const k of bkeys) if (!pendingByBroadcast.has(k)) pendingByBroadcast.set(k, item);
+      }
+      // else: duplicate slot, or a same-date item without distinguishing S/E —
+      // keep the first indexed (legacy single-slot behavior).
+    } else {
       other.push(item);
     }
   }
@@ -1139,19 +1169,36 @@ function mergeDiscoveries(incoming) {
     if (!ep?.id) continue;
     const bkeys = discoveryBroadcastKeys(ep);
     const ekeys = discoveryEpisodeIdentityKeys(ep);
+    const skeys = discoverySlotKeys(ep);
     if (!bkeys.length && !ekeys.length) { other.push({ ...ep, status: ep.status || "pending" }); continue; }
 
-    // Once the user reviewed this show/date, never resurrect it under a different
-    // provider ID or episode number.
-    if (bkeys.some(k => reviewedByBroadcast.has(k))) continue;
     // Once the user added/dismissed an episode, never re-offer the same S/E under
     // a stale or corrected airdate.
     if (ekeys.some(k => reviewedByEpisode.has(k))) continue;
+    // Once the user reviewed this show/date, suppress only genuine variants of
+    // that broadcast (stale numbering or title) — never a different episode
+    // from a multi-episode night.
+    const reviewedHits = [...new Set(bkeys.map(k => reviewedByBroadcast.get(k)).filter(Boolean))];
+    if (reviewedHits.some(r => sameReviewedBroadcast(r, ep))) continue;
 
-    const previous = bkeys.map(k => pendingByBroadcast.get(k)).find(Boolean);
+    let previous = skeys.map(k => pendingBySlot.get(k)).find(Boolean);
+    if (!previous && bkeys.length) {
+      const bPrev = bkeys.map(k => pendingByBroadcast.get(k)).find(Boolean);
+      if (bPrev) {
+        const seMismatch = hasFiniteEpisodeNumber(ep) && hasFiniteEpisodeNumber(bPrev) &&
+          !sameSlotEpisode(ep, bPrev);
+        const prevSupport = Number(bPrev._providerSupport || 0);
+        const nextSupport = Number(ep._providerSupport || 0);
+        // Two well-supported different episodes on one date is a genuine
+        // multi-episode night: separate card. Weak support on either side means
+        // a provider numbering correction: merge into the existing slot.
+        previous = (!seMismatch || prevSupport < 2 || nextSupport < 2) ? bPrev : null;
+      }
+    }
     if (!previous) {
       const item = { ...ep, status: "pending" };
-      for (const k of bkeys) pendingByBroadcast.set(k, item);
+      for (const k of skeys) pendingBySlot.set(k, item);
+      for (const k of bkeys) if (!pendingByBroadcast.has(k)) pendingByBroadcast.set(k, item);
       continue;
     }
 
@@ -1172,7 +1219,9 @@ function mergeDiscoveries(incoming) {
       : { ...ep, ...previous, status: "pending" };
     // Refresh every key still pointing at the previous object so older name
     // variants converge onto the merged record.
+    for (const [k, v] of pendingBySlot) if (v === previous) pendingBySlot.set(k, merged);
     for (const [k, v] of pendingByBroadcast) if (v === previous) pendingByBroadcast.set(k, merged);
+    for (const k of skeys) pendingBySlot.set(k, merged);
   }
 
   // One item can be indexed under several keys (name variants, broadcast + S/E).
@@ -1181,7 +1230,7 @@ function mergeDiscoveries(incoming) {
     ...other,
     ...reviewedByBroadcast.values(),
     ...reviewedByEpisode.values(),
-    ...pendingByBroadcast.values()
+    ...pendingBySlot.values()
   ].filter(item => {
     const id = item && item.id;
     if (id) {
