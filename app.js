@@ -1121,6 +1121,15 @@ function sameSlotEpisode(a, b) {
   return hasFiniteEpisodeNumber(a) && hasFiniteEpisodeNumber(b) &&
     Number(a.season) === Number(b.season) && Number(a.number) === Number(b.number);
 }
+// Two records describe the same episode when they share the worker's canonical
+// S/E identity, or — when numbering is absent — the full fingerprint.
+function sameEpisodeIdentity(a, b) {
+  const ka = new Set(discoveryEpisodeIdentityKeys(a));
+  if (ka.size && discoveryEpisodeIdentityKeys(b).some(k => ka.has(k))) return true;
+  const fa = discoveryFingerprint(a);
+  const fb = discoveryFingerprint(b);
+  return Boolean(fa && fb && fa === fb);
+}
 
 function mergeDiscoveries(incoming) {
   // A TV broadcast slot is show + airdate + episode number when providers know
@@ -1174,7 +1183,15 @@ function mergeDiscoveries(incoming) {
 
     // Once the user added/dismissed an episode, never re-offer the same S/E under
     // a stale or corrected airdate.
-    if (ekeys.some(k => reviewedByEpisode.has(k))) continue;
+    const reviewedEpisodeHit = ekeys.map(k => reviewedByEpisode.get(k)).find(Boolean);
+    if (reviewedEpisodeHit) {
+      // Heal a stale id on the reviewed record. Same S/E is the same episode,
+      // so the worker's current id is authoritative: a record merged under the
+      // old show+airdate slot rule can squat on a different episode's id, and
+      // left alone the final id-dedupe would drop that episode's new card.
+      if (reviewedEpisodeHit.id !== ep.id) reviewedEpisodeHit.id = ep.id;
+      continue;
+    }
     // Once the user reviewed this show/date, suppress only genuine variants of
     // that broadcast (stale numbering or title) — never a different episode
     // from a multi-episode night.
@@ -1197,6 +1214,19 @@ function mergeDiscoveries(incoming) {
     }
     if (!previous) {
       const item = { ...ep, status: "pending" };
+      // A pre-v0.2.60 record can squat on this episode's id (same id, different
+      // episode). Re-key the squatter so the final id-dedupe cannot drop this
+      // card; the squatter is repaired to its true id when its own episode
+      // next arrives (merge branch / reviewed-episode heal above).
+      if (item.id) {
+        const rekeyed = new Set();
+        const candidates = [...other, ...reviewedByBroadcast.values(), ...reviewedByEpisode.values(), ...pendingBySlot.values()];
+        for (const rec of candidates) {
+          if (!rec || rec === item || rec.id !== item.id || rekeyed.has(rec)) continue;
+          rekeyed.add(rec);
+          if (!sameEpisodeIdentity(rec, item)) rec.id = String(rec.id) + "#stale";
+        }
+      }
       for (const k of skeys) pendingBySlot.set(k, item);
       for (const k of bkeys) if (!pendingByBroadcast.has(k)) pendingByBroadcast.set(k, item);
       continue;
