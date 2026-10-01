@@ -1,3 +1,7 @@
-DVR Wheel v0.2.61 (2026-10-01)
-- Fixes double-premiere cards being dropped by the id-dedupe: a card merged under the old show+airdate slot rule could squat on another episode's id (E1's id on E2's S/E). Merging now adopts the incoming worker id, repairing the squatter so the split-off episode survives.
-- app.js?v=0.2.61
+DVR Wheel v0.2.62 (2026-10-01)
+- Fixes E1 still not surfacing after its E2 card was already added/dismissed: the reviewed E2 card kept the corrupt pre-v0.2.60 id (E1's id), so the final id-dedupe kept dropping the new E1 card.
+- Reviewed-episode suppression now heals the reviewed record's id to the worker's current id (same S/E = same episode, worker id authoritative).
+- New-card creation re-keys any id-squatting record (same id, different episode) to id#stale so the new card survives even when the squatted episode isn't in the run.
+- Merge branch (v0.2.61) still adopts the incoming worker id for pending records.
+- 20-check regression suite passes, including the exact added-E2 scenario.
+- app.js?v=0.2.62
