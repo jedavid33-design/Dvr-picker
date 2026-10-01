@@ -1214,9 +1214,15 @@ function mergeDiscoveries(incoming) {
       (nextSupport === prevSupport && metadataChanged) ||
       (nextSupport === prevSupport && previous.season == null && ep.season != null) ||
       (nextSupport === prevSupport && previous.number == null && ep.number != null);
+    // The card's id must identify the episode it now describes. A card merged
+    // under the old show+airdate slot rule can squat on a different episode's id
+    // (double-premiere corruption: E1's id carried on E2's season/episode); keeping
+    // that stale id lets the final id-dedupe silently drop the genuinely different
+    // episode. The incoming id is the worker's current identifier for this slot
+    // episode, so adopt it and repair the squatting record.
     const merged = useIncoming
-      ? { ...previous, ...ep, id: previous.id || ep.id, status: "pending" }
-      : { ...ep, ...previous, status: "pending" };
+      ? { ...previous, ...ep, id: ep.id || previous.id, status: "pending" }
+      : { ...ep, ...previous, id: ep.id || previous.id, status: "pending" };
     // Refresh every key still pointing at the previous object so older name
     // variants converge onto the merged record.
     for (const [k, v] of pendingBySlot) if (v === previous) pendingBySlot.set(k, merged);
