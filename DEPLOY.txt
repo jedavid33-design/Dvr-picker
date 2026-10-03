@@ -44,3 +44,8 @@ DVR Wheel v0.2.62 (2026-10-01)
 - Merge branch (v0.2.61) still adopts the incoming worker id for pending records.
 - 20-check regression suite passes, including the exact added-E2 scenario.
 - app.js?v=0.2.62
+
+DVR Wheel v0.2.65 (2026-10-03)
+- One-time cleanup: dedupe doubled Coven Academy wheel slices (v0.2.64
+  migration left each segment twice) and drop S1 E1 so the wheel starts at
+  Disney+ S1 E2 ("Blood, Sweat, and Fears") per Julie.
