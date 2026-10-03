@@ -1762,7 +1762,7 @@ function recordCompletedTvDates(dates, dateResults) {
 function reportTvCheckOutcome(failures) {
   if ((!failures || !failures.length) && !lastCatchUpTruncatedDays) return;
   const bits = (failures || []).map(f =>
-    `${formatAirdate(f.date)}${f.failedShows.length ? ` (${f.failedShows.length} provider error${f.failedShows.length === 1 ? "" : "s"})` : ""} — will retry`
+    `${formatAirdate(f.date)}${f.failedShows.length ? ` (${f.failedShows.length} show check${f.failedShows.length === 1 ? "" : "s"} still failing)` : ""} — will retry`
   );
   if (lastCatchUpTruncatedDays > 0) {
     bits.push(`couldn't check ${lastCatchUpTruncatedDays} older day${lastCatchUpTruncatedDays === 1 ? "" : "s"} (gap over 30 days)`);
