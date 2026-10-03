@@ -1,3 +1,10 @@
+DVR Wheel v0.2.69 (2026-10-03)
+- Fix false incomplete TV checks caused by the three supplementary daily-show verification lookups:
+  - Big Brother, Jeopardy!, and Wheel of Fortune isolated verification is accuracy-only
+  - a failure in that optional verification no longer marks the whole date incomplete
+  - required batch/retry failures still do
+- app.js?v=0.2.69
+
 DVR Wheel v0.2.68 (2026-10-03)
 - Fix TV-check retry bookkeeping:
   - a transient provider failure is now cleared when that show's isolated retry succeeds
