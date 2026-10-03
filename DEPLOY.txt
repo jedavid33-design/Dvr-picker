@@ -1,3 +1,10 @@
+DVR Wheel v0.2.68 (2026-10-03)
+- Fix TV-check retry bookkeeping:
+  - a transient provider failure is now cleared when that show's isolated retry succeeds
+  - prevents successfully recovered shows from leaving a date falsely stuck as "Check incomplete"
+  - preserves true failures: a retry that still fails remains marked for the next check
+- app.js?v=0.2.68
+
 DVR Wheel v0.2.67 (2026-10-03)
 - Replace whole-weight percentage growth with accelerating daily increments:
   - day 1 adds +1.00
