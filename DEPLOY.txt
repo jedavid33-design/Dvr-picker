@@ -1,3 +1,10 @@
+DVR Wheel v0.2.66 (2026-10-03)
+- Restore the intended automatic wheel aging rate after an accidental regression:
+  - automatic age weighting is back to x1.15/day (15% daily growth)
+  - replaces the x2.3/day multiplier, which made older slices balloon far too quickly
+  - weighting remains automatic-only; no manual weighting toggle is restored
+- app.js?v=0.2.66
+
 DVR Wheel v0.2.64 (2026-10-03)
 - Coven Academy numbering fix: the show aired on Freeform as 10 combined
   "A / B" TV episodes but Disney+ lists 21 individual segments, so the wheel's
