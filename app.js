@@ -177,8 +177,12 @@ function localDayNumber(value) {
   return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
 }
 function automaticGrowthForDays(days) {
-  const age = Math.max(0, Number(days) || 0);
-  return Math.pow(1.15, age);
+  const age = Math.max(0, Math.floor(Number(days) || 0));
+  const incrementGrowth = 1.20;
+  // Start at weight 1. Each day adds an increment that is 20% larger than
+  // the previous day's increment: +1.00, +1.20, +1.44, +1.728, ...
+  if (age === 0) return 1;
+  return 1 + (Math.pow(incrementGrowth, age) - 1) / (incrementGrowth - 1);
 }
 function effectiveWeight(movie) {
   const manual = Math.max(1, Number(movie?.weight) || 1);
