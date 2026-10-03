@@ -178,7 +178,7 @@ function localDayNumber(value) {
 }
 function automaticGrowthForDays(days) {
   const age = Math.max(0, Number(days) || 0);
-  return Math.pow(2.3, age);
+  return Math.pow(1.15, age);
 }
 function effectiveWeight(movie) {
   const manual = Math.max(1, Number(movie?.weight) || 1);
