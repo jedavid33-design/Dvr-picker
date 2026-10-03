@@ -13,7 +13,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.59";
+const VERSION = "0.2.60";
 // Shows that air daily/near-daily where databases update at different speeds.
 // Single-provider episodes are trusted for these; others require 2+ providers
 // when 3+ providers were queried successfully.
@@ -634,7 +634,7 @@ async function debugDiscovery(date, raw, env) {
     eligible[source] = items.filter(ep => ep.airdate === date);
   }
 
-  const finalEpisodes = reconcileProviderEpisodes(eligible);
+  const finalEpisodes = reconcileProviderEpisodes(eligible, canonicalName || title);
   const compact = items => items.map(ep => ({
     season: ep.season ?? null,
     number: ep.number ?? null,
@@ -766,7 +766,7 @@ async function discover(date, shows, env) {
     // results from other databases are not evidence that the broadcast did not exist.
     // This matters especially for daily/near-daily shows whose databases update at
     // different speeds (Jeopardy!, Wheel of Fortune, Big Brother).
-    const reconciled = reconcileProviderEpisodes(normalized);
+    const reconciled = reconcileProviderEpisodes(normalized, canonicalName || title);
     for (const ep of reconciled) {
       const matchingProviders = positiveProviders.filter(([, items]) =>
         items.some(item => episodeSignature(item) === episodeSignature(ep))
@@ -847,6 +847,16 @@ const SHOW_SEASON_OFFSETS = {
   "20 20": -1
 };
 
+// Shows whose streaming segmentation is finer than the TV-broadcast numbering
+// and matches how Julie actually watches them. For these, when providers
+// disagree on numbering, prefer the provider set with the most episodes on a
+// date over the highest-weighted provider.
+// (Coven Academy 2026-10-03: TVDB+TMDB list 10 combined "A / B" TV episodes;
+// TVmaze lists the 21 Disney+ segments Julie sees on screen.)
+const SHOW_PREFER_FINEST_NUMBERING = new Set([
+  "coven academy"
+]);
+
 function applyShowSeasonOffset(season, showName) {
   if (season === null || season === undefined || season === "") return season;
   const offset = SHOW_SEASON_OFFSETS[normalize(showName)];
@@ -876,7 +886,7 @@ function episodeSignature(ep) {
   return title ? `t:${title}` : `id:${ep?.id || ""}`;
 }
 
-function reconcileProviderEpisodes(groups) {
+function reconcileProviderEpisodes(groups, showName) {
   const sourceWeight = { tvdb: 4, tmdb: 3, tvmaze: 2, episodate: 1 };
   const activeProviders = Object.entries(groups || {}).filter(([, items]) => Array.isArray(items) && items.length);
   if (activeProviders.length === 1) return dedupeEpisodes(activeProviders[0][1]);
@@ -885,6 +895,11 @@ function reconcileProviderEpisodes(groups) {
     for (const ep of items || []) all.push({ ...ep, source: ep.source || source });
   }
   if (!all.length) return [];
+  // Shows in SHOW_PREFER_FINEST_NUMBERING stream in finer segments than their
+  // TV broadcast numbering (Coven Academy: 21 Disney+ segments vs 10 combined
+  // TV episodes). For those, keep the most granular provider's set per date
+  // instead of the highest-weighted provider's numbering.
+  const preferFinest = SHOW_PREFER_FINEST_NUMBERING.has(normalize(showName));
 
   const buckets = new Map();
   for (const ep of all) {
@@ -918,6 +933,37 @@ function reconcileProviderEpisodes(groups) {
 
   const chosen = [];
   for (const rows of byDate.values()) {
+    if (preferFinest) {
+      // This show's streaming segmentation is finer than its TV numbering, so
+      // buckets merge providers (TVmaze's 21 segments share S/E 1-10 buckets
+      // with the coarser 10-episode listing). Count raw provider records per
+      // source across this date's buckets; the source with the most records
+      // has the finest numbering. Keep that source's record from every bucket.
+      const countBySource = new Map();
+      for (const row of rows) {
+        for (const item of row.items || []) {
+          const src = item.source || "";
+          countBySource.set(src, (countBySource.get(src) || 0) + 1);
+        }
+      }
+      let finestSource = null, finestCount = 0;
+      for (const [src, n] of countBySource) {
+        if (n > finestCount) { finestCount = n; finestSource = src; }
+      }
+      const picked = [];
+      for (const row of rows) {
+        const items = row.items || [];
+        let rec = items.find(x => (x.source || "") === finestSource) || row.best;
+        if (isPlaceholderEpisodeTitle(rec.title)) {
+          const titled = items.find(x => !isPlaceholderEpisodeTitle(x.title));
+          if (titled) rec = { ...rec, title: titled.title };
+        }
+        picked.push(rec);
+      }
+      picked.sort((a, b) => Number(a.number || 0) - Number(b.number || 0));
+      for (const rec of picked) chosen.push(rec);
+      continue;
+    }
     const maxSupport = Math.max(...rows.map(r => r.support));
     const winners = rows.filter(r => r.support === maxSupport);
     winners.sort((a, b) => (sourceWeight[b.best.source] || 0) - (sourceWeight[a.best.source] || 0));
@@ -1044,7 +1090,7 @@ async function backfillShow(raw, env) {
     for (const date of [...dates].sort()) {
       const groups = {};
       for (const [source, items] of Object.entries(normalized)) groups[source] = items.filter(ep => ep.airdate === date);
-      found.push(...reconcileProviderEpisodes(groups));
+      found.push(...reconcileProviderEpisodes(groups, canonicalName || title));
     }
     if (found.length) {
       episodes = found.sort((a,b) => String(a.airdate).localeCompare(String(b.airdate))).slice(-100);
