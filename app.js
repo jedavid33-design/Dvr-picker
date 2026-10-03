@@ -1917,9 +1917,12 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
     });
     const verified = await Promise.allSettled(verifyJobs);
     for (const result of verified) {
-      if (result.status !== "fulfilled") { checkFailed = true; continue; }
+      // These three lookups are supplementary accuracy checks, not part of the
+      // required date-completion pass. A failure here must not turn an otherwise
+      // successful date into "Check incomplete" or re-add a show that the main
+      // batch / mandatory retry already cleared.
+      if (result.status !== "fulfilled") continue;
       const { key, payload, ms } = result.value;
-      noteShowStatus(payload);
       const isolatedEpisodes = (payload.episodes || []).filter(ep => ep?.airdate === date);
       noteIsolatedVerification(key, date, isolatedEpisodes.length > 0);
 
