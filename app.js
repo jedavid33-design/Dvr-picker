@@ -1792,9 +1792,16 @@ async function discoverDate(date, { batchSize = 5 } = {}) {
   let checkFailed = false;
   const failedShowNames = new Set();
   const noteShowStatus = (payload) => {
+    // Status is authoritative for the latest completed lookup of each show.
+    // A transient provider failure may trigger an isolated retry; when that
+    // retry succeeds, clear the earlier failure instead of leaving the date
+    // permanently marked incomplete.
     for (const row of payload?.showStatus || []) {
-      if (!row || row.ok !== false) continue;
-      failedShowNames.add(normalizeTrackedName(row.title));
+      if (!row?.title) continue;
+      const key = normalizeTrackedName(row.title);
+      if (!key) continue;
+      if (row.ok === false) failedShowNames.add(key);
+      else if (row.ok === true) failedShowNames.delete(key);
     }
   };
 
