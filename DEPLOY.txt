@@ -1,3 +1,13 @@
+DVR Wheel v0.2.67 (2026-10-03)
+- Replace whole-weight percentage growth with accelerating daily increments:
+  - day 1 adds +1.00
+  - each following day's increment is 20% larger than the prior day's increment
+    (+1.20, +1.44, +1.728, ...)
+  - effective weights begin 1.00, 2.00, 3.20, 4.64, 6.368...
+  - preserves the feel of the old +1/day system at first while gradually giving
+    older items more priority without the runaway x2.3/day ballooning
+- app.js?v=0.2.67
+
 DVR Wheel v0.2.66 (2026-10-03)
 - Restore the intended automatic wheel aging rate after an accidental regression:
   - automatic age weighting is back to x1.15/day (15% daily growth)
