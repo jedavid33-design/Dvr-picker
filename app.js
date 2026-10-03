@@ -369,6 +369,31 @@ function migrateCovenAcademySegments() {
   try { localStorage.setItem(COVEN_SEGMENT_MIGRATION_KEY, "1"); } catch {}
 }
 
+// One-time cleanup (2026-10-03, v0.2.65): the v0.2.64 segment migration left
+// duplicate Coven Academy slices on the wheel (each segment twice). Dedupe to
+// one slice per segment number, and drop S1 E1 ("A Hex Education") so the
+// wheel starts at Disney+ S1 E2 ("Blood, Sweat, and Fears") per Julie.
+const COVEN_DEDUP_KEY = "dvrPicker.covenAcademyDedup.v1";
+function dedupCovenAcademySegments() {
+  let flag = null;
+  try { flag = localStorage.getItem(COVEN_DEDUP_KEY); } catch { return; }
+  if (flag) return;
+  let changed = false;
+  const seen = new Set();
+  const deduped = [];
+  for (const m of movies) {
+    const d = episodeDescriptor(m.title);
+    if (d && normalizeTrackedName(d.show) === "coven academy" && Number(d.season) === 1) {
+      const num = Number(d.number);
+      if (num === 1 || seen.has(num)) { changed = true; continue; }
+      seen.add(num);
+    }
+    deduped.push(m);
+  }
+  if (changed) { movies = deduped; save(); }
+  try { localStorage.setItem(COVEN_DEDUP_KEY, "1"); } catch {}
+}
+
 function finishSpin(index) {
   if (index == null || !movies[index]) return;
   index = resolveNextUnwatchedEpisodeIndex(index);
@@ -595,7 +620,9 @@ newMovie.addEventListener("keydown", e => { if (e.key === "Enter") addBtn.click(
 
 // v0.2.64: expand any legacy Coven Academy TV-numbered slices/records to the
 // 21 Disney+ segment numbering before the last-spin restore and first render.
+// v0.2.65: dedupe any doubled segments and drop S1 E1 so the wheel starts at E2.
 migrateCovenAcademySegments();
+dedupCovenAcademySegments();
 
 const restoredSpin = loadLastSpin();
 if (restoredSpin) {
