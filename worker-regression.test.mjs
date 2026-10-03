@@ -89,5 +89,50 @@ check("no offset for other shows", other.season === 50, JSON.stringify(other.sea
 check("null season stays null", F.applyShowSeasonOffset(null, "20/20") === null, "");
 check("undefined season stays undefined", F.applyShowSeasonOffset(undefined, "20/20") === undefined, "");
 
+// --- Scenario 7: Coven Academy prefers finest numbering (21 Disney+ segments
+// over the 10 combined TV episodes), other shows keep the old behavior.
+const covenTvTitles = [
+  "Hex Education / Blood, Sweat, and Fears / Mother of All Secrets",
+  "Dead Ends / Power Trip",
+  "Roses Are Red / Pick Your Poison",
+  "The Scrying Game / Trial by Fire",
+  "Time Warp / The Night It Happened",
+  "Between Worlds / What She Saw",
+  "Witchgiving / Cold Turkey",
+  "1998 / Thicker Than Water",
+  "Winter Solstice / The Covening",
+  "Bloodlines / After the Ashes"
+];
+const covenSegTitles = [
+  "A Hex Education", "Blood, Sweat, and Fears", "Mother of All Secrets",
+  "Dead Ends", "Power Trip", "Roses Are Red", "Pick Your Poison",
+  "The Scrying Game", "Trial by Fire", "Time Warp", "The Night It Happened",
+  "Between Worlds", "What She Saw", "Witchgiving", "Cold Turkey",
+  "1998", "Thicker Than Water", "Winter Solstice", "The Covening",
+  "Bloodlines", "After the Ashes"
+];
+const covenTvdb = covenTvTitles.map((t, i) => F.normalizeTvdbEpisode(
+  { id: 100 + i, seasonNumber: 1, number: i + 1, name: t, aired: "2026-10-02" },
+  "Coven Academy", "Coven Academy", 999));
+const covenTmdb = covenTvTitles.map((t, i) => F.normalizeTmdbEpisode(
+  { id: 200 + i, season_number: 1, episode_number: i + 1, name: t, air_date: "2026-10-02" },
+  "Coven Academy", "Coven Academy", 888));
+const covenMaze = covenSegTitles.map((t, i) => F.normalizeMazeEpisode(
+  { id: 300 + i, season: 1, number: i + 1, name: t, airdate: "2026-10-02" },
+  { id: 83159, name: "Coven Academy" }, "Coven Academy"));
+const covenGroups = { tvmaze: covenMaze, episodate: [], tmdb: covenTmdb, tvdb: covenTvdb };
+
+const r7 = F.reconcileProviderEpisodes(covenGroups, "Coven Academy");
+check("coven academy prefers finest: 21 segments",
+  r7.length === 21 && r7.every((e, i) => e.number === i + 1),
+  JSON.stringify(r7.map(e => e.number)));
+check("coven academy segment titles are individual (not combined)",
+  r7[3] && r7[3].title === "Dead Ends" && r7[4] && r7[4].title === "Power Trip",
+  JSON.stringify(r7.slice(3, 5).map(e => e.title)));
+
+const r7b = F.reconcileProviderEpisodes(covenGroups, "Some Other Show");
+check("other shows keep provider-weight behavior: 10 episodes",
+  r7b.length === 10, JSON.stringify(r7b.length));
+
 if (failures) { console.log(`\n${failures} FAILURE(S)`); process.exit(1); }
 console.log("\nAll tests passed.");
