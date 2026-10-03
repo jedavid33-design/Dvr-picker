@@ -1,3 +1,21 @@
+DVR Wheel v0.2.64 (2026-10-03)
+- Coven Academy numbering fix: the show aired on Freeform as 10 combined
+  "A / B" TV episodes but Disney+ lists 21 individual segments, so the wheel's
+  "S1 E2" matched nothing on screen.
+  - Worker v0.2.60: new SHOW_PREFER_FINEST_NUMBERING override;
+    reconcileProviderEpisodes now takes the show name and, for listed shows,
+    keeps the most granular provider's episode set per date instead of the
+    highest-weighted provider's numbering (TVmaze's 21 segments now beat
+    TVDB+TMDB's 10 combined episodes). Other shows keep the old behavior.
+  - Worker: regression test scenario 7 covers the new behavior (21 pass).
+  - App v0.2.64: one-time on-load migration expands any legacy Coven Academy
+    wheel slices and discovery records (S1 E1-10 "A / B") to the 21-segment
+    numbering (S1 E1-21). Watched state preserved: only slices still on the
+    wheel are expanded; already-watched episodes stay gone; expanded discovery
+    records keep their reviewed status so future runs don't re-offer segments.
+  - The next-unwatched redirect is untouched and keys off the parsed S/E
+    numbers, which the new titles carry correctly.
+
 DVR Wheel v0.2.63 (2026-10-01)
 - Full audit fix pass (5 major + 13 minor findings):
   - Major: /api/discover returns per-show status; frontend only advances the
