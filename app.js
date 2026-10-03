@@ -295,6 +295,80 @@ function resolveNextUnwatchedEpisodeIndex(index) {
   return candidates[0].index;
 }
 
+// One-time migration (2026-10-03, v0.2.64): Coven Academy shipped on the wheel
+// with TV-broadcast numbering (10 combined "A / B" episodes) but Disney+ lists
+// 21 individual segments, so the wheel's "S1 E2" matched nothing on screen.
+// Expand old-format slices and discovery records to the 21-segment numbering
+// (segment titles from TVmaze, matching what the worker now serves).
+// Watched state is preserved: only slices still on the wheel (unwatched) are
+// expanded — episodes already marked watched stay gone, and the expanded
+// discovery records keep their reviewed status so future runs don't re-offer
+// the segments. The next-unwatched redirect keeps working because it keys off
+// the parsed S/E numbers, which the new titles carry correctly.
+const COVEN_SEGMENT_MIGRATION_KEY = "dvrPicker.covenAcademySegments.v1";
+const COVEN_ACADEMY_SEGMENTS = [
+  [[1, "A Hex Education"], [2, "Blood, Sweat, and Fears"], [3, "Mother of All Secrets"]],
+  [[4, "Dead Ends"], [5, "Power Trip"]],
+  [[6, "Roses Are Red"], [7, "Pick Your Poison"]],
+  [[8, "The Scrying Game"], [9, "Trial by Fire"]],
+  [[10, "Time Warp"], [11, "The Night It Happened"]],
+  [[12, "Between Worlds"], [13, "What She Saw"]],
+  [[14, "Witchgiving"], [15, "Cold Turkey"]],
+  [[16, "1998"], [17, "Thicker Than Water"]],
+  [[18, "Winter Solstice"], [19, "The Covening"]],
+  [[20, "Bloodlines"], [21, "After the Ashes"]]
+];
+function isLegacyCovenAcademyEntry(showName, season, number, title) {
+  return normalizeTrackedName(showName) === "coven academy" &&
+    Number(season) === 1 && Number.isInteger(Number(number)) &&
+    Number(number) >= 1 && Number(number) <= 10 &&
+    String(title || "").includes(" / ");
+}
+function migrateCovenAcademySegments() {
+  let flag = null;
+  try { flag = localStorage.getItem(COVEN_SEGMENT_MIGRATION_KEY); } catch { return; }
+  if (flag) return;
+  let changed = false;
+
+  const expandedMovies = [];
+  for (const m of movies) {
+    const d = episodeDescriptor(m.title);
+    if (d && !d.legacy && isLegacyCovenAcademyEntry(d.show, d.season, d.number, m.title)) {
+      for (const [segNum, segTitle] of COVEN_ACADEMY_SEGMENTS[d.number - 1]) {
+        expandedMovies.push({ ...m, title: `Coven Academy · S1 E${segNum} · ${segTitle}` });
+      }
+      changed = true;
+    } else {
+      expandedMovies.push(m);
+    }
+  }
+  if (changed) movies = expandedMovies;
+
+  const expandedDiscoveries = [];
+  for (const item of discoveries) {
+    if ((item.kind || "episode") === "episode" &&
+        isLegacyCovenAcademyEntry(item.show || item.trackedTitle, item.season, item.number, item.title)) {
+      const num = Number(item.number);
+      for (const [segNum, segTitle] of COVEN_ACADEMY_SEGMENTS[num - 1]) {
+        expandedDiscoveries.push({
+          ...item,
+          id: `${item.id || "coven-academy"}#seg${segNum}`,
+          season: 1,
+          number: segNum,
+          title: segTitle
+        });
+      }
+      changed = true;
+    } else {
+      expandedDiscoveries.push(item);
+    }
+  }
+  if (changed) discoveries = expandedDiscoveries;
+
+  if (changed) { save(); saveDiscoveries(); }
+  try { localStorage.setItem(COVEN_SEGMENT_MIGRATION_KEY, "1"); } catch {}
+}
+
 function finishSpin(index) {
   if (index == null || !movies[index]) return;
   index = resolveNextUnwatchedEpisodeIndex(index);
@@ -518,6 +592,10 @@ addBtn.onclick = () => {
 };
 newMovie.addEventListener("keydown", e => { if (e.key === "Enter") addBtn.click(); });
 
+
+// v0.2.64: expand any legacy Coven Academy TV-numbered slices/records to the
+// 21 Disney+ segment numbering before the last-spin restore and first render.
+migrateCovenAcademySegments();
 
 const restoredSpin = loadLastSpin();
 if (restoredSpin) {
