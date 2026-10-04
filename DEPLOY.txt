@@ -1,3 +1,14 @@
+DVR Wheel v0.2.71 (2026-10-04)
+- Make manual-item aging explicitly date-added based:
+  - new manual slices store addedAt plus the compatibility autoWeightStartedAt field
+  - load() preserves addedAt across reloads
+  - effectiveWeight() uses addedAt first for undated/manual slices
+  - pre-v0.2.71 manual slices inherit any existing start date; when no historical
+    date was ever stored, their current weight is preserved and aging continues from today
+- TV-discovered slices continue to age from airdate.
+- Keeps the 20%-accelerating daily increment curve.
+- app.js?v=0.2.71
+
 DVR Wheel v0.2.70 (2026-10-04)
 - Fix automatic wheel weights not updating after reopen:
   - load() now preserves airdate and autoWeightStartedAt
