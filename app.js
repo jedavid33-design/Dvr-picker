@@ -144,6 +144,7 @@ function load() {
   weight: Math.max(1, Number(item.weight) || 1),
   locked: item.locked || item.title.trim() === "🎲 Second Spin",
   airdate: /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") ? item.airdate : null,
+  addedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.addedAt || "") ? item.addedAt : null,
   autoWeightStartedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.autoWeightStartedAt || "") ? item.autoWeightStartedAt : null
 }))
   } catch {
@@ -192,7 +193,7 @@ function effectiveWeight(movie) {
   const today = localDayNumber(todayString());
   const air = localDayNumber(movie?.airdate);
   if (air != null && today != null) return automaticGrowthForDays(today - air);
-  const started = localDayNumber(movie?.autoWeightStartedAt);
+  const started = localDayNumber(movie?.addedAt || movie?.autoWeightStartedAt);
   if (started != null && today != null) return manual * automaticGrowthForDays(today - started);
   return manual;
 }
@@ -616,7 +617,12 @@ addBtn.onclick = () => {
   const title = newMovie.value.trim();
   if (!title) return;
   lastState = JSON.stringify(movies);
-  insertAtRandomWheelPosition({ title, weight: 1, autoWeightStartedAt: todayString() });
+  insertAtRandomWheelPosition({
+    title,
+    weight: 1,
+    addedAt: todayString(),
+    autoWeightStartedAt: todayString()
+  });
   newMovie.value = "";
   save();
   render();
@@ -653,9 +659,21 @@ function repairWheelWeightMetadata() {
         changed = true;
       }
     }
-    if (!movie.airdate && !movie.autoWeightStartedAt) {
-      movie.autoWeightStartedAt = todayString();
-      changed = true;
+    if (!movie.airdate) {
+      if (!movie.addedAt && movie.autoWeightStartedAt) {
+        movie.addedAt = movie.autoWeightStartedAt;
+        changed = true;
+      }
+      if (!movie.addedAt && !movie.autoWeightStartedAt) {
+        // Exact historical add dates were not stored by older builds. Keep the
+        // item's existing weight as its inherited priority and age forward from today.
+        movie.addedAt = todayString();
+        movie.autoWeightStartedAt = movie.addedAt;
+        changed = true;
+      } else if (movie.addedAt && !movie.autoWeightStartedAt) {
+        movie.autoWeightStartedAt = movie.addedAt;
+        changed = true;
+      }
     }
   }
 
