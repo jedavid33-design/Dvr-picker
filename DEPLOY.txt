@@ -1,3 +1,13 @@
+DVR Wheel v0.2.70 (2026-10-04)
+- Fix automatic wheel weights not updating after reopen:
+  - load() now preserves airdate and autoWeightStartedAt
+  - existing added TV slices restore missing airdates from saved discovery history
+  - remaining undated unlocked slices get a local weighting start date
+  - new manual slices store their weighting start date immediately
+  - weighting now uses the local calendar date instead of UTC
+- Keeps the v0.2.67 20%-accelerating daily increment curve.
+- app.js?v=0.2.70
+
 DVR Wheel v0.2.69 (2026-10-03)
 - Fix false incomplete TV checks caused by the three supplementary daily-show verification lookups:
   - Big Brother, Jeopardy!, and Wheel of Fortune isolated verification is accuracy-only
