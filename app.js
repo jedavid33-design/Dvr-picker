@@ -142,7 +142,9 @@ function load() {
       .map(item => ({
   title: item.title.trim(),
   weight: Math.max(1, Number(item.weight) || 1),
-  locked: item.locked || item.title.trim() === "🎲 Second Spin"
+  locked: item.locked || item.title.trim() === "🎲 Second Spin",
+  airdate: /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") ? item.airdate : null,
+  autoWeightStartedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.autoWeightStartedAt || "") ? item.autoWeightStartedAt : null
 }))
   } catch {
     return freshDefaults();
@@ -187,7 +189,7 @@ function automaticGrowthForDays(days) {
 function effectiveWeight(movie) {
   const manual = Math.max(1, Number(movie?.weight) || 1);
   if (movie?.locked) return manual;
-  const today = localDayNumber(new Date().toISOString().slice(0,10));
+  const today = localDayNumber(todayString());
   const air = localDayNumber(movie?.airdate);
   if (air != null && today != null) return automaticGrowthForDays(today - air);
   const started = localDayNumber(movie?.autoWeightStartedAt);
@@ -614,7 +616,7 @@ addBtn.onclick = () => {
   const title = newMovie.value.trim();
   if (!title) return;
   lastState = JSON.stringify(movies);
-  insertAtRandomWheelPosition({ title, weight: 1 });
+  insertAtRandomWheelPosition({ title, weight: 1, autoWeightStartedAt: todayString() });
   newMovie.value = "";
   save();
   render();
@@ -627,6 +629,39 @@ newMovie.addEventListener("keydown", e => { if (e.key === "Enter") addBtn.click(
 // v0.2.65: dedupe any doubled segments and drop S1 E1 so the wheel starts at E2.
 migrateCovenAcademySegments();
 dedupCovenAcademySegments();
+
+// v0.2.70: older load() code discarded airdate/autoWeightStartedAt, so the
+// automatic age curve silently fell back to a static weight after reload.
+// Repair existing TV slices from saved discovery history and give any remaining
+// undated unlocked slice a local starting date so it ages correctly from now on.
+function repairWheelWeightMetadata() {
+  let changed = false;
+  const addedByTitle = new Map();
+  for (const ep of discoveries) {
+    if ((ep.kind || "episode") !== "episode" || ep.status !== "added") continue;
+    const title = episodeWheelTitle(ep);
+    if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(ep.airdate || "")) continue;
+    addedByTitle.set(title, ep.airdate);
+  }
+
+  for (const movie of movies) {
+    if (movie.locked) continue;
+    if (!movie.airdate) {
+      const restoredAirdate = addedByTitle.get(movie.title);
+      if (restoredAirdate) {
+        movie.airdate = restoredAirdate;
+        changed = true;
+      }
+    }
+    if (!movie.airdate && !movie.autoWeightStartedAt) {
+      movie.autoWeightStartedAt = todayString();
+      changed = true;
+    }
+  }
+
+  if (changed) save();
+}
+repairWheelWeightMetadata();
 
 const restoredSpin = loadLastSpin();
 if (restoredSpin) {
