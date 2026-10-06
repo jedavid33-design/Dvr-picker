@@ -569,7 +569,7 @@ function renderList() {
     row.className = "movie-row";
     const shownWeight = effectiveWeight(movie);
     const pct = Math.round(shownWeight / total * 100);
-    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${shownWeight.toFixed(shownWeight < 10 ? 1 : 0)}</div>${movie.locked ? "" : `<button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`}`;
+    row.innerHTML = `<div class="movie-title">${escapeHtml(movie.title)} <span class="tiny">${pct}%</span></div><div class="weight">${shownWeight.toFixed(1)}</div>${movie.locked ? "" : `<button class="remove" aria-label="Remove ${escapeHtml(movie.title)}">Remove</button>`}`;
     const removeBtn = row.querySelector(".remove");
     if (!removeBtn) { movieList.appendChild(row); return; }
     removeBtn.onclick = () => {
