@@ -1,3 +1,17 @@
+DVR Wheel v0.2.73 (2026-10-08)
+- Initial Tracked TV backfill dedupes episodes with the same show + S/E
+  when metadata sources date broadcast and streaming one day apart.
+- One-time on-load cleanup removes existing New from TV duplicates without
+  undoing any prior Add/Dismiss decisions or modifying wheel slices.
+- Preserve genuine multi-episode dates, different shows, and unnumbered
+  episode records. Descriptive titles win over generic placeholder titles.
+- Frontend regression coverage: discovery-regression.test.mjs (8 checks).
+- Worker v0.2.61: normalize backfill results across different provider dates
+  before returning cards. Worker deployment needed for upstream deduplication;
+  frontend dedupe works independently after page update.
+- Worker regression suite: 35 checks.
+- index.html app.js?v=0.2.73 (cache-busting).
+
 DVR Wheel v0.2.71 (2026-10-04)
 - Make manual-item aging explicitly date-added based:
   - new manual slices store addedAt plus the compatibility autoWeightStartedAt field
