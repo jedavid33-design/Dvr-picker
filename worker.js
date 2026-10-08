@@ -13,7 +13,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.60";
+const VERSION = "0.2.61";
 // Shows that air daily/near-daily where databases update at different speeds.
 // Single-provider episodes are trusted for these; others require 2+ providers
 // when 3+ providers were queried successfully.
