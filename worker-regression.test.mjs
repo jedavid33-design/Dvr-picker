@@ -23,7 +23,7 @@ if (end < 0) throw new Error("export block end not found");
 const body = src.slice(0, start) + src.slice(end + 1).replace(/^;/, "");
 // Provide fetch-free stubs for anything the top-level scope might touch.
 const sandbox = { fetch: async () => { throw new Error("no network in test"); } };
-const factory = new Function("fetch", `${body}\nreturn { normalize, normalizeMazeEpisode, normalizeTmdbEpisode, normalizeTvdbEpisode, normalizeEpisodateEpisode, episodeSignature, reconcileProviderEpisodes, dedupeEpisodes, isPlaceholderEpisodeTitle, applyShowSeasonOffset };`);
+const factory = new Function("fetch", `${body}\nreturn { normalize, normalizeMazeEpisode, normalizeTmdbEpisode, normalizeTvdbEpisode, normalizeEpisodateEpisode, episodeSignature, reconcileProviderEpisodes, dedupeEpisodes, dedupeBackfillEpisodeDates, isPlaceholderEpisodeTitle, applyShowSeasonOffset };`);
 const F = factory(sandbox.fetch);
 
 let failures = 0;
@@ -133,6 +133,23 @@ check("coven academy segment titles are individual (not combined)",
 const r7b = F.reconcileProviderEpisodes(covenGroups, "Some Other Show");
 check("other shows keep provider-weight behavior: 10 episodes",
   r7b.length === 10, JSON.stringify(r7b.length));
+
+// --- Scenario 8: initial backfill dedupes provider date drift across days.
+// A show's premiere and next episode must each appear once, even if different
+// databases list broadcast Thursday and streaming Friday as air dates.
+const kitchenHistory = [
+  { show: "Hell's Kitchen", trackedTitle: "Hell's Kitchen", season: 25, number: 1, title: "25th Premiere Party", airdate: "2026-09-24" },
+  { show: "Hell's Kitchen", trackedTitle: "Hell's Kitchen", season: 25, number: 1, title: "25th Premiere Party", airdate: "2026-09-25" },
+  { show: "Hell's Kitchen", trackedTitle: "Hell's Kitchen", season: 25, number: 2, title: "A Tale of Two Kitchens", airdate: "2026-10-01" },
+  { show: "Hell's Kitchen", trackedTitle: "Hell's Kitchen", season: 25, number: 2, title: "A Tale of Two Kitchens", airdate: "2026-10-02" }
+];
+const kitchenUnique = F.dedupeBackfillEpisodeDates(kitchenHistory);
+check("initial backfill cross-day variants produce just two episodes", kitchenUnique.length === 2, JSON.stringify(kitchenUnique));
+check("initial backfill prefers earlier broadcast dates", kitchenUnique[0]?.airdate === "2026-09-24" && kitchenUnique[1]?.airdate === "2026-10-01", JSON.stringify(kitchenUnique));
+check("initial backfill keeps genuine different episodes", F.dedupeBackfillEpisodeDates([
+  { show: "Test", season: 1, number: 1, airdate: "2026-10-01" },
+  { show: "Test", season: 1, number: 2, airdate: "2026-10-01" }
+]).length === 2, "");
 
 if (failures) { console.log(`\n${failures} FAILURE(S)`); process.exit(1); }
 console.log("\nAll tests passed.");
