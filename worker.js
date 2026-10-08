@@ -1099,7 +1099,7 @@ async function backfillShow(raw, env) {
     }
   }
   return {
-    episodes: dedupeEpisodes(episodes),
+    episodes: dedupeBackfillEpisodeDates(dedupeEpisodes(episodes)),
     windowDays: chosenWindow,
     resolvedShow: { title, canonicalName, tvmazeId: mazeId, episodateId: epiId, tmdbId, tvdbId }
   };
@@ -1244,6 +1244,31 @@ function addCandidate(map, show, franchiseTitle, seedId, trackedIds, baseScore, 
     network: show.network || null,
     score
   });
+}
+
+// Backfill scans multiple days in one request. TV providers can date the
+// same S/E to its broadcast day or next-day streaming release. Resolve across
+// dates after per-day provider reconciliation rather than offering both cards.
+function dedupeBackfillEpisodeDates(items) {
+  const byEpisode = new Map();
+  const other = [];
+  for (const ep of items) {
+    const numbered = ep && ep.season != null && ep.number != null &&
+      ep.season !== "" && ep.number !== "" &&
+      Number.isFinite(Number(ep.season)) && Number.isFinite(Number(ep.number));
+    if (!numbered) { other.push(ep); continue; }
+    const key = [normalize(ep.trackedTitle || ep.show), Number(ep.season), Number(ep.number)].join("|");
+    const previous = byEpisode.get(key);
+    if (!previous) { byEpisode.set(key, ep); continue; }
+    const earlier = ep.airdate && (!previous.airdate || ep.airdate < previous.airdate);
+    const preferred = earlier ? ep : previous;
+    const alternate = earlier ? previous : ep;
+    byEpisode.set(key, isPlaceholderEpisodeTitle(preferred.title) && !isPlaceholderEpisodeTitle(alternate.title)
+      ? { ...preferred, title: alternate.title }
+      : preferred);
+  }
+  return [...other, ...byEpisode.values()].sort((a,b) =>
+    String(a.airdate || "").localeCompare(String(b.airdate || "")));
 }
 
 function dedupeEpisodes(items) {
