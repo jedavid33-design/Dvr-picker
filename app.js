@@ -1327,6 +1327,53 @@ function sameEpisodeIdentity(a, b) {
   return Boolean(fa && fb && fa === fb);
 }
 
+// Initial backfill combines sources that may date the same S/E one day apart
+// (e.g. Hell's Kitchen S25E1 on Sep 24 and 25). Preserve one discovery per
+// tracked show + season + episode, while keeping genuine different S/E cards.
+function collapseDuplicateEpisodeDiscoveries(items) {
+  const kept = [];
+  const byEpisode = new Map();
+  for (const item of items) {
+    const numbered = item && (item.kind || "episode") === "episode" &&
+      item.season != null && item.number != null &&
+      item.season !== "" && item.number !== "" &&
+      Number.isFinite(Number(item.season)) && Number.isFinite(Number(item.number));
+    if (!numbered) { kept.push({ item }); continue; }
+    const keys = discoveryEpisodeIdentityKeys(item);
+    const existing = keys.map(key => byEpisode.get(key)).find(Boolean);
+    if (!existing) {
+      const entry = { item };
+      kept.push(entry);
+      for (const key of keys) byEpisode.set(key, entry);
+      continue;
+    }
+
+    const current = existing.item;
+    const wasReviewed = ["added", "dismissed"].includes(current.status);
+    const isReviewed = ["added", "dismissed"].includes(item.status);
+    let winner;
+    if (wasReviewed !== isReviewed) {
+      // Never turn an already-added or dismissed episode back into pending.
+      winner = wasReviewed ? current : item;
+    } else if (wasReviewed) {
+      // If both variants were reviewed, honor the most recent user action.
+      winner = Date.parse(item.reviewedAt || 0) > Date.parse(current.reviewedAt || 0) ? item : current;
+    } else {
+      // Aired + next-day-streaming records: prefer the earliest known airdate.
+      winner = (item.airdate && (!current.airdate || item.airdate < current.airdate)) ? item : current;
+    }
+    const alternate = winner === item ? current : item;
+    if (isGenericEpisodeTitle(winner.title) && !isGenericEpisodeTitle(alternate.title)) {
+      winner = { ...winner, title: alternate.title };
+    }
+    existing.item = winner;
+    for (const key of [...keys, ...discoveryEpisodeIdentityKeys(winner)]) {
+      byEpisode.set(key, existing);
+    }
+  }
+  return kept.map(entry => entry.item);
+}
+
 function mergeDiscoveries(incoming) {
   // A TV broadcast slot is show + airdate + episode number when providers know
   // it. Provider IDs and episode numbers are metadata about that slot, not
@@ -1474,7 +1521,7 @@ function mergeDiscoveries(incoming) {
   // One item can be indexed under several keys (name variants, broadcast + S/E).
   const seenIds = new Set();
   const seenFingerprints = new Set();
-  discoveries = [
+  discoveries = collapseDuplicateEpisodeDiscoveries([
     ...other,
     ...reviewedByBroadcast.values(),
     ...reviewedByEpisode.values(),
@@ -1495,7 +1542,7 @@ function mergeDiscoveries(incoming) {
       seenFingerprints.add(fp);
     }
     return true;
-  }).slice(-800);
+  }).slice(-800));
   saveDiscoveries();
 }
 function migrateOldCheckState() {
@@ -2321,6 +2368,13 @@ async function saveAndTestWorker() {
 }
 
 function initTvDiscovery() {
+  // Heal legacy duplicates already stored on this device, without resetting
+  // dismissed/added status or any wheel entries.
+  const cleaned = collapseDuplicateEpisodeDiscoveries(discoveries);
+  if (cleaned.length !== discoveries.length) {
+    discoveries = cleaned;
+    saveDiscoveries();
+  }
   migrateOldCheckState();
   workerUrlInput.value = getWorkerUrl();
   renderTrackedShows();
