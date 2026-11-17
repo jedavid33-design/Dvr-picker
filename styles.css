@@ -197,7 +197,7 @@ button:disabled { opacity: .46; cursor: default; }
 
 .actions {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 1fr;
+  grid-template-columns: 1.3fr 1.1fr 1fr 1fr;
   gap: 10px;
   margin: 14px 0;
 }

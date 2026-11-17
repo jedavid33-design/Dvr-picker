@@ -28,6 +28,7 @@ const spinBtn = document.getElementById("spinBtn");
 const watchedBtn = document.getElementById("watchedBtn");
 const undoBtn = document.getElementById("undoBtn");
 const resetBtn = document.getElementById("resetBtn");
+const resetTo1Btn = document.getElementById("resetTo1Btn");
 const movieList = document.getElementById("movieList");
 const totalSlices = document.getElementById("totalSlices");
 const newMovie = document.getElementById("newMovie");
@@ -145,7 +146,8 @@ function load() {
   locked: item.locked || item.title.trim() === "🎲 Second Spin",
   airdate: /^\d{4}-\d{2}-\d{2}$/.test(item.airdate || "") ? item.airdate : null,
   addedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.addedAt || "") ? item.addedAt : null,
-  autoWeightStartedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.autoWeightStartedAt || "") ? item.autoWeightStartedAt : null
+  autoWeightStartedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.autoWeightStartedAt || "") ? item.autoWeightStartedAt : null,
+  lastWatchedAt: /^\d{4}-\d{2}-\d{2}$/.test(item.lastWatchedAt || "") ? item.lastWatchedAt : null
 }))
   } catch {
     return freshDefaults();
@@ -191,6 +193,11 @@ function effectiveWeight(movie) {
   const manual = Math.max(1, Number(movie?.weight) || 1);
   if (movie?.locked) return manual;
   const today = localDayNumber(todayString());
+  // v0.2.74: Reset to 1 records lastWatchedAt; the entry then ages from that
+  // date on the standard curve (1.0 on the day itself), ahead of airdate and
+  // added-date aging. The stored airdate/addedAt metadata is left untouched.
+  const watched = localDayNumber(movie?.lastWatchedAt);
+  if (watched != null && today != null) return automaticGrowthForDays(today - watched);
   const air = localDayNumber(movie?.airdate);
   if (air != null && today != null) return automaticGrowthForDays(today - air);
   const started = localDayNumber(movie?.addedAt || movie?.autoWeightStartedAt);
@@ -410,6 +417,7 @@ function finishSpin(index) {
   winnerEl.setAttribute?.("aria-live", "polite");
   spinBtn.disabled = false;
   watchedBtn.disabled = false;
+  syncResetTo1Btn();
   saveLastSpin();
   drawWheel();
 }
@@ -427,6 +435,7 @@ function spin() {
   spinning = true;
   spinBtn.disabled = true;
   watchedBtn.disabled = true;
+  syncResetTo1Btn();
   setWinner("Spinning...");
 
   function animate(now) {
@@ -470,6 +479,36 @@ function undo() {
   watchedBtn.disabled = true;
 save();
 render();
+}
+
+// v0.2.74: Reset to 1 is available only for a settled selection of a normal
+// entry — never while spinning, with nothing selected, or for the locked
+// Second Spin entry.
+function syncResetTo1Btn() {
+  resetTo1Btn.disabled = spinning || selectedIndex == null || !movies[selectedIndex] || !!movies[selectedIndex].locked;
+}
+
+// v0.2.74: like Watched, but the series stays on the wheel: its weight goes
+// back to 1.0 and its aging clock restarts from today. The entry keeps its
+// wheel position and all other metadata; Undo restores the previous weight
+// and last-watched date from the shared lastState snapshot.
+function markResetTo1() {
+  if (spinning || selectedIndex == null) return;
+  const movie = movies[selectedIndex];
+  if (!movie || movie.locked) return;
+
+  lastState = JSON.stringify(movies);
+
+  movie.weight = 1;
+  movie.lastWatchedAt = todayString();
+
+  selectedIndex = null;
+  clearLastSpin();
+  setWinner("Tap Spin");
+  watchedBtn.disabled = true;
+
+  save();
+  render();
 }
 
 function drawWheel() {
@@ -595,10 +634,11 @@ function renderList() {
   });
 }
 function escapeHtml(text) { return text.replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
-function render() { drawWheel(); renderList(); }
+function render() { drawWheel(); renderList(); syncResetTo1Btn(); }
 
 spinBtn.onclick = spin;
 watchedBtn.onclick = markWatched;
+resetTo1Btn.onclick = markResetTo1;
 undoBtn.onclick = undo;
 resetBtn.onclick = () => dialog.showModal();
 document.getElementById("cancelReset").onclick = () => dialog.close();

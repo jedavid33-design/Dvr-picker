@@ -1,3 +1,23 @@
+DVR Wheel v0.2.74 (2026-11-16)
+- Add a "Reset to 1" button alongside Watched, Undo and Reset, for series
+  being watched through (e.g. The West Wing, ER): it records an episode as
+  watched while keeping the series on the wheel.
+  - sets the selected entry's stored weight to 1 and records today's local
+    calendar date as its new lastWatchedAt field
+  - effectiveWeight() ages the entry from lastWatchedAt on the existing
+    20%-accelerating daily increment curve (1.0 today, 2.0, 3.2, 4.64,
+    6.368...), ahead of airdate/added-date aging; each use restarts the clock
+  - the entry keeps its wheel position and all other metadata (airdate,
+    addedAt, autoWeightStartedAt untouched)
+  - clears the selected result like Watched; Undo restores the previous
+    weight and last-watched date via the shared lastState snapshot
+  - the button is disabled while spinning, when nothing is selected, and
+    when the locked Second Spin entry is selected
+  - load() preserves lastWatchedAt across reloads (legacy entries load null)
+  - actions grid widened to four columns for the extra button
+- Frontend regression coverage: reset-to-1-regression.test.mjs (42 checks).
+- index.html app.js?v=0.2.74, styles.css?v=0.2.74 (cache-busting).
+
 DVR Wheel v0.2.73 (2026-10-08)
 - Initial Tracked TV backfill dedupes episodes with the same show + S/E
   when metadata sources date broadcast and streaming one day apart.
