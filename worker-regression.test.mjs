@@ -151,5 +151,34 @@ check("initial backfill keeps genuine different episodes", F.dedupeBackfillEpiso
   { show: "Test", season: 1, number: 2, airdate: "2026-10-01" }
 ]).length === 2, "");
 
+// --- Scenario: Wheel of Fortune 2026-11-24 support tie (v0.2.62)
+// TVmaze + EpisoDate agree on S44 E52; TMDB alone says E57. Weighted support
+// ties 3-3 (tvmaze 2 + episodate 1 vs tmdb 3), and the old tie-break by
+// single-source rank let TMDB outvote two agreeing providers. The numbering
+// with more providers agreeing must win.
+const wofMaze = F.normalizeMazeEpisode(
+  { id: 4001, season: 44, number: 52, name: "Gathered in Gratitude", airdate: "2026-11-24" },
+  { id: 157, name: "Wheel of Fortune" }, "Wheel of Fortune");
+const wofEpi = F.normalizeEpisodateEpisode(
+  { season: 44, episode: 52, name: "Gathered in Gratitude", air_date: "2026-11-24" },
+  "Wheel of Fortune", "Wheel of Fortune", "wheel-of-fortune");
+const wofTmdb = F.normalizeTmdbEpisode(
+  { id: 4002, season_number: 44, episode_number: 57, name: "Gathered in Gratitude", air_date: "2026-11-24" },
+  "Wheel of Fortune", "Wheel of Fortune", 2778);
+const rWof = F.reconcileProviderEpisodes(
+  { tvmaze: [wofMaze], episodate: [wofEpi], tmdb: [wofTmdb], tvdb: [] }, "Wheel of Fortune");
+check("wheel of fortune tie: exactly one episode", rWof.length === 1, JSON.stringify(rWof.length));
+check("wheel of fortune tie: agreed numbering E52 wins over TMDB-only E57",
+  rWof[0] && Number(rWof[0].number) === 52, JSON.stringify(rWof[0] && rWof[0].number));
+check("wheel of fortune tie: title preserved",
+  rWof[0] && rWof[0].title === "Gathered in Gratitude", JSON.stringify(rWof[0] && rWof[0].title));
+
+// Sanity: a lone high-weight provider still wins when nobody else reports
+// the date (no agreement to outvote it).
+const rWofSolo = F.reconcileProviderEpisodes(
+  { tvmaze: [], episodate: [], tmdb: [wofTmdb], tvdb: [] }, "Wheel of Fortune");
+check("wheel of fortune solo TMDB still surfaces E57",
+  rWofSolo.length === 1 && Number(rWofSolo[0].number) === 57, JSON.stringify(rWofSolo.map(e => e.number)));
+
 if (failures) { console.log(`\n${failures} FAILURE(S)`); process.exit(1); }
 console.log("\nAll tests passed.");

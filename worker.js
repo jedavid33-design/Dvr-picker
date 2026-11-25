@@ -13,7 +13,7 @@
  */
 
 const APP = "DVR Wheel TV Bridge";
-const VERSION = "0.2.61";
+const VERSION = "0.2.62";
 // Shows that air daily/near-daily where databases update at different speeds.
 // Single-provider episodes are trusted for these; others require 2+ providers
 // when 3+ providers were queried successfully.
@@ -966,7 +966,15 @@ function reconcileProviderEpisodes(groups, showName) {
     }
     const maxSupport = Math.max(...rows.map(r => r.support));
     const winners = rows.filter(r => r.support === maxSupport);
-    winners.sort((a, b) => (sourceWeight[b.best.source] || 0) - (sourceWeight[a.best.source] || 0));
+    // On a support tie, the numbering more providers agree on wins before
+    // single-source rank is consulted. Weighted support alone let TMDB alone
+    // (3) tie TVmaze + EpisoDate together (2 + 1) and then outrank them,
+    // which put Wheel of Fortune S44 at E57 instead of the E52 two providers
+    // agreed on (2026-11-24). Agreement count is the consensus this block
+    // exists to find; source weight only breaks a remaining tie.
+    winners.sort((a, b) =>
+      (b.providers.size - a.providers.size) ||
+      ((sourceWeight[b.best.source] || 0) - (sourceWeight[a.best.source] || 0)));
 
     // Preserve genuine multiple-episode days when several candidates have meaningful
     // independent support; otherwise choose the best-supported numbering for that date.

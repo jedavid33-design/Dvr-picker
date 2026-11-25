@@ -1,3 +1,18 @@
+DVR Wheel worker v0.2.62 (2026-11-25)
+- Fix provider-consensus tie-break in reconcileProviderEpisodes: when two
+  numbering candidates tie on weighted support, the one more providers
+  agree on now wins before single-source rank is consulted. Wheel of
+  Fortune 2026-11-24: TVmaze + EpisoDate agreed on S44 E52 (support 2+1=3)
+  but TMDB alone (support 3, higher source rank) won the old tie-break and
+  the wheel showed E57; TMDB's Wheel numbering runs +5 this season. The
+  agreed E52 now wins. A lone provider still surfaces when nobody else
+  reports the date.
+- Client side needs no change: the pending E57 card carries
+  _providerSupport 1 and the corrected E52 arrives with support 2, so the
+  app's merge updates the existing card in place (no duplicate).
+- Regression coverage: worker-regression.test.mjs Wheel tie scenario.
+- Worker only (script dvr-wheel-worker); no frontend changes.
+
 DVR Wheel v0.2.74 (2026-11-16)
 - Add a "Reset to 1" button alongside Watched, Undo and Reset, for series
   being watched through (e.g. The West Wing, ER): it records an episode as
